@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Plus, AlertTriangle, Crown, User, UsersIcon, Info } from "lucide-react"
+import { Plus, AlertTriangle, Crown, User, UsersIcon } from "lucide-react"
 import { getUsersForCurrentAccount, getCurrentUser } from "@/lib/auth-actions"
 import { UserEditButton } from "@/components/user-edit-button"
 
@@ -40,17 +40,6 @@ export async function UsersPage() {
               <UsersIcon className="h-6 w-6" />
               Account Users
             </CardTitle>
-            {!error && users.length > 0 && (
-              <Alert className="border-blue-500/50 bg-blue-500/10 mb-4">
-                <Info className="h-4 w-4" />
-                <AlertDescription className="text-blue-400">
-                  <p className="text-sm">
-                    <strong>Note:</strong> Individual user management features may be limited due to API access
-                    restrictions. User details and attribute editing depend on endpoint availability.
-                  </p>
-                </AlertDescription>
-              </Alert>
-            )}
             <p className="text-gray-400 mt-1">
               {error ? "Error loading users" : `${users.length} users`} in{" "}
               <span className="text-purple-300">{user.activeAccount.name}</span>
@@ -93,21 +82,12 @@ export async function UsersPage() {
               </TableHeader>
               <TableBody>
                 {users.map((user, index) => {
-                  // Use the actual attribute names from the API response
-                  const firstName = user.attributes?.firstname || "" // Note: 'firstname' not 'first_name'
-                  const lastName = user.attributes?.lastname || user.attributes?.surname || "" // Try both 'lastname' and 'surname'
+                  const firstName = user.attributes?.firstname || ""
+                  const lastName = user.attributes?.lastname || user.attributes?.surname || ""
                   const displayName =
                     firstName && lastName
                       ? `${firstName} ${lastName}`.trim()
                       : firstName || lastName || user.attributes?.name || user.identifiers.email_address.split("@")[0]
-
-                  console.log(
-                    `[UsersPage] User ${user.user_id} - firstName: "${firstName}", lastName: "${lastName}", displayName: "${displayName}"`,
-                  )
-                  console.log(
-                    `[UsersPage] User ${user.user_id} all attributes:`,
-                    JSON.stringify(user.attributes, null, 2),
-                  )
 
                   return (
                     <TableRow key={user.user_id} className="border-white/20 hover:bg-white/5">

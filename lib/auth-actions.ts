@@ -4,12 +4,10 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { getUsersByAccount } from "./user-api"
 import { getAccountsByOwner } from "./account-api"
-import { getProductsByAccount } from "./product-api"
 import { publicApiCall } from "./public-api"
+import { adminApiCall, type ZephrProductWithGrant } from "./zephr-api" // Corrected import for ZephrProductWithGrant and getProductsByAccount
 import type { ZephrAccount } from "./account-api"
 import type { ZephrUser } from "./user-api"
-import type { ZephrProduct } from "./product-api"
-import { adminApiCall } from "./api-client"
 
 export interface LoginResult {
   success: boolean
@@ -174,16 +172,37 @@ export async function getUsersForCurrentAccount(): Promise<ZephrUser[]> {
   }
 }
 
-export async function getProductsForCurrentAccount(): Promise<ZephrProduct[]> {
+// Corrected to use ZephrProductWithGrant from zephr-api
+export async function getProductsForCurrentAccount(): Promise<ZephrProductWithGrant[]> {
   const user = await getCurrentUser()
   if (!user?.activeAccount) {
+    console.log("[getProductsForCurrentAccount] No active account found")
     return []
   }
 
+  console.log(
+    `[getProductsForCurrentAccount] === Starting products fetch for account: ${user.activeAccount.account_id} ===`,
+  )
+  console.log(`[getProductsForCurrentAccount] Account name: ${user.activeAccount.name}`)
+
   try {
-    return await getProductsByAccount(user.activeAccount.account_id)
+    // Ensure this calls the getProductsByAccount from zephr-api.ts
+    const { getProductsByAccount } = await import("./zephr-api")
+    const products = await getProductsByAccount(user.activeAccount.account_id)
+    console.log(`[getProductsForCurrentAccount] ✅ Successfully fetched ${products.length} products`)
+    return products
   } catch (error) {
-    console.error("Error fetching products for account:", error)
+    console.error("[getProductsForCurrentAccount] ❌ Error fetching products:", error)
+
+    // Log the full error details for debugging
+    if (error instanceof Error) {
+      console.error("[getProductsForCurrentAccount] Error name:", error.name)
+      console.error("[getProductsForCurrentAccount] Error message:", error.message)
+      console.error("[getProductsForCurrentAccount] Error stack:", error.stack)
+    }
+
+    // Always return empty array to prevent dashboard crash
+    // The error will be handled by the calling component
     return []
   }
 }

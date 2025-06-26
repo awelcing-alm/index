@@ -1,27 +1,34 @@
-// app/api/bulk-users/route.ts – patched to reliably capture `user_id`
+// app/api/bulk-users/route.ts – trusts `accountId` supplied in the POST body
+// (the page server‑side injects the currently‑selected account, so this value is
+// authoritative). If the client omits or tampers with it, we hard‑fail with 400.
+
 import { NextRequest, NextResponse } from "next/server"
 import pLimit from "p-limit"
 import { adminApiCall } from "@/lib/zephr-api"
 
 const CONCURRENCY = 8
-
-// 🔎 helper – Zephr sometimes wraps response in { data: { … } }
-const extractUserId = (res: any): string | undefined =>
-  res?.user_id ?? res?.data?.user_id ?? res?.data?.data?.user_id
+const extractUserId = (res: any): string | undefined => res?.user_id ?? res?.data?.user_id
 
 export async function POST(req: NextRequest) {
   try {
     const { emails, accountId, emailVerified = false } = await req.json()
 
-    if (!accountId) return NextResponse.json({ error: "Missing accountId" }, { status: 400 })
-    if (!Array.isArray(emails) || emails.length === 0) return NextResponse.json({ error: "No emails provided" }, { status: 400 })
+    // Guard: we *must* have exactly one account ID and it must be non‑empty.
+    if (typeof accountId !== "string" || accountId.trim() === "" || accountId === "undefined") {
+      return NextResponse.json({ error: "Valid accountId required" }, { status: 400 })
+    }
+
+    if (!Array.isArray(emails) || emails.length === 0) {
+      return NextResponse.json({ error: "No emails provided" }, { status: 400 })
+    }
 
     const limiter = pLimit(CONCURRENCY)
+
     const results = await Promise.all(
       emails.map((email: string) =>
         limiter(async () => {
-          /* 1️⃣ CREATE USER */
           try {
+            /* 1️⃣  CREATE (or fetch) USER */
             const createRes = await adminApiCall("/v3/users", {
               method: "POST",
               body: JSON.stringify({
@@ -31,16 +38,13 @@ export async function POST(req: NextRequest) {
             })
 
             let userId = extractUserId(createRes)
-
-            // If Zephr returns 202/201 with no body, fetch by email
             if (!userId) {
               const search = await adminApiCall(`/v3/users?email=${encodeURIComponent(email)}`, { method: "GET" })
               userId = extractUserId(search?.data?.[0] ?? search?.data?.results?.[0])
             }
-
             if (!userId) throw new Error("user_id missing in API response")
 
-            /* 2️⃣ ADD TO ACCOUNT */
+            /* 2️⃣  ATTACH TO EXACTLY THAT ACCOUNT */
             await adminApiCall(`/v3/accounts/${accountId}/users/${userId}`, { method: "PUT" })
 
             return { email, status: "success" as const, userId, message: "User linked" }
@@ -53,7 +57,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ results }, { status: 201 })
   } catch (err: any) {
-    console.error(err)
-    return NextResponse.json({ error: err.message ?? "Unknown error" }, { status: 500 })
+    console.error("Bulk user API error", err)
+    return NextResponse.json({ error: "Internal error" }, { status: 500 })
   }
 }

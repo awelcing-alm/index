@@ -1,10 +1,11 @@
 "use client"
 
-import { useTransition } from "react"
+import { useEffect, useTransition } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { switchAccount } from "@/lib/auth-actions"
 import { useRouter } from "next/navigation"
 import type { ZephrAccount } from "@/lib/zephr-api"
+import { setActiveAccount } from "@/lib/account-api"
 
 interface AccountSwitcherProps {
   accounts: ZephrAccount[]
@@ -15,13 +16,15 @@ export function AccountSwitcher({ accounts, activeAccount }: AccountSwitcherProp
   const [isPending, startTransition] = useTransition()
   const router = useRouter()
 
-  console.log("[AccountSwitcher] Active Account Prop:", activeAccount)
-  console.log("[AccountSwitcher] All Accounts Prop:", accounts)
+  // 🟢  Keep the central active‑account store in sync on first render / prop change
+  useEffect(() => {
+    setActiveAccount(activeAccount)
+  }, [activeAccount])
 
   const handleAccountChange = (accountId: string) => {
     startTransition(async () => {
       await switchAccount(accountId)
-      // Refresh the page to load new account data
+      // server action sets cookie; when page refreshes, server will send new activeAccount prop
       router.refresh()
     })
   }

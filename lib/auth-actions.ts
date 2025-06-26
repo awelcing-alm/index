@@ -118,6 +118,17 @@ export async function loginUser(email: string, password: string): Promise<LoginR
   }
 }
 
+export async function getCurrentAccount(): Promise<ZephrAccount | undefined> {
+  const id = (await cookies()).get("active_account_id")?.value;
+  if (!id || id === "undefined") return undefined;
+
+  const raw = (await adminApiCall(`/v3/accounts/${id}`, { method: "GET" })) as
+    | ZephrAccount
+    | { data: ZephrAccount };
+
+  return ("data" in raw ? raw.data : raw) as ZephrAccount;
+}
+
 export async function getCurrentUser() {
   const cookieStore = await cookies()
   const userEmail = cookieStore.get("user_email")?.value

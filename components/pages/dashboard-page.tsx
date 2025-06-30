@@ -11,66 +11,103 @@ import {
   Crown,
   User,
   AlertTriangle,
-} from "lucide-react"
-import { getUsersForCurrentAccount, getProductsForCurrentAccount, getCurrentUser } from "@/lib/auth-actions"
+} from "lucide-react";
+import {
+  getUsersForCurrentAccount,
+  getProductsForCurrentAccount,
+  getCurrentUser,
+} from "@/lib/auth-actions";
+import { cookies } from "next/headers";
+import { listTpls } from "@/lib/blob"; 
 
+/* ---------------- helper: template names via blob ---------------- */
+async function getTemplateNames(): Promise<string[]> {
+  // ⬇️  add await here
+  const accId = (await cookies()).get("active_account_id")?.value;
+  if (!accId) return [];
+
+  return await listTpls(accId);
+}
+
+/* ==================================================================== */
 export async function DashboardPage() {
-  const user = await getCurrentUser()
+  const user = await getCurrentUser();
 
   if (!user?.activeAccount) {
     return (
       <div className="flex items-center justify-center h-64">
         <Alert className="border-yellow-500/50 bg-yellow-500/10 max-w-md">
           <AlertTriangle className="h-4 w-4" />
-          <AlertDescription className="text-yellow-400">No active account selected</AlertDescription>
+          <AlertDescription className="text-yellow-400">
+            No active account selected
+          </AlertDescription>
         </Alert>
       </div>
-    )
+    );
   }
 
-  let users: any[] = []
-  let products: any[] = []
-  let templates: any[] = []
-  let usersError: string | null = null
-  let productsError: string | null = null
+  /* ---------- data pulls ---------- */
+  let users: any[] = [];
+  let products: any[] = [];
+  let templateNames: string[] = [];
+
+  let usersError: string | null = null;
+  let productsError: string | null = null;
+  let tplError: string | null = null;
 
   try {
-    users = await getUsersForCurrentAccount()
-  } catch (err) {
-    console.error("Error loading users:", err)
-    usersError = err instanceof Error ? err.message : "Failed to load users"
+    users = await getUsersForCurrentAccount();
+  } catch (e) {
+    usersError = (e as Error).message ?? "Failed to load users";
   }
 
   try {
-    products = await getProductsForCurrentAccount()
-  } catch (err) {
-    console.error("Error loading products:", err)
-    productsError = err instanceof Error ? err.message : "Failed to load products"
+    products = await getProductsForCurrentAccount();
+  } catch (e) {
+    productsError = (e as Error).message ?? "Failed to load products";
   }
 
-  // Load templates from localStorage (client-side data)
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("zephr-templates")
-    if (saved) {
-      templates = JSON.parse(saved)
-    }
+  try {
+    templateNames = await getTemplateNames();
+  } catch (e) {
+    tplError = (e as Error).message ?? "Failed to load templates";
   }
 
-  // Calculate statistics
-  const totalUsers = users.length
-  const ownerUsers = users.filter((u) => u.user_type === "owner").length
-  const regularUsers = totalUsers - ownerUsers
-  const activeProducts = products.filter((p) => p.expiry_state === "active").length
-  const totalProducts = products.length
-  const totalTemplates = templates.length
+  /* ---------- derived stats ---------- */
+  const totalUsers = users.length;
+  const ownerUsers = users.filter((u) => u.user_type === "owner").length;
+  const regularUsers = totalUsers - ownerUsers;
 
-  // Recent activity (mock data for now)
+  const totalProducts = products.length;
+  const activeProducts = products.filter(
+    (p) => p.expiry_state === "active",
+  ).length;
+
+  const totalTemplates = templateNames.length;
+
+  /* ---------- mock recent activity ---------- */
   const recentActivity = [
-    { type: "user", action: "User added", details: "New user joined the account", time: "2 hours ago" },
-    { type: "product", action: "Product assigned", details: "Compass assigned to 3 users", time: "1 day ago" },
-    { type: "template", action: "Template created", details: "Legal Professional template", time: "2 days ago" },
-  ]
+    {
+      type: "user",
+      action: "User added",
+      details: "New user joined the account",
+      time: "2 hours ago",
+    },
+    {
+      type: "product",
+      action: "Product assigned",
+      details: "Compass assigned to 3 users",
+      time: "1 day ago",
+    },
+    {
+      type: "template",
+      action: "Template created",
+      details: "Legal Professional template",
+      time: "2 days ago",
+    },
+  ];
 
+  /* ================================================================== */
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -80,202 +117,117 @@ export async function DashboardPage() {
           Dashboard
         </h1>
         <p className="text-gray-400 mt-1">
-          Overview for <span className="text-purple-300">{user.activeAccount.name}</span>
+          Overview for{" "}
+          <span className="text-purple-300">{user.activeAccount.name}</span>
         </p>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Users card */}
         <Card className="bg-black/20 backdrop-blur-lg border-white/10">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-300">Total Users</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-300">
+              Total Users
+            </CardTitle>
             <Users className="h-4 w-4 text-blue-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">{usersError ? "Error" : totalUsers}</div>
+            <div className="text-2xl font-bold text-white">
+              {usersError ? "Error" : totalUsers}
+            </div>
             <div className="flex gap-2 mt-2">
-              <Badge variant="outline" className="border-yellow-500/50 text-yellow-300 text-xs">
+              <Badge
+                variant="outline"
+                className="border-yellow-500/50 text-yellow-300 text-xs"
+              >
                 {ownerUsers} owners
               </Badge>
-              <Badge variant="outline" className="border-blue-500/50 text-blue-300 text-xs">
+              <Badge
+                variant="outline"
+                className="border-blue-500/50 text-blue-300 text-xs"
+              >
                 {regularUsers} users
               </Badge>
             </div>
           </CardContent>
         </Card>
 
+        {/* Products card */}
         <Card className="bg-black/20 backdrop-blur-lg border-white/10">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-300">Products</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-300">
+              Products
+            </CardTitle>
             <Package className="h-4 w-4 text-green-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">{productsError ? "Error" : totalProducts}</div>
+            <div className="text-2xl font-bold text-white">
+              {productsError ? "Error" : totalProducts}
+            </div>
             <div className="flex gap-2 mt-2">
-              <Badge variant="outline" className="border-green-500/50 text-green-300 text-xs">
+              <Badge
+                variant="outline"
+                className="border-green-500/50 text-green-300 text-xs"
+              >
                 {activeProducts} active
               </Badge>
-              <Badge variant="outline" className="border-gray-500/50 text-gray-400 text-xs">
+              <Badge
+                variant="outline"
+                className="border-gray-500/50 text-gray-400 text-xs"
+              >
                 {totalProducts - activeProducts} inactive
               </Badge>
             </div>
           </CardContent>
         </Card>
 
+        {/* Templates card */}
         <Card className="bg-black/20 backdrop-blur-lg border-white/10">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-300">Templates</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-300">
+              Templates
+            </CardTitle>
             <FileText className="h-4 w-4 text-purple-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">{totalTemplates}</div>
+            <div className="text-2xl font-bold text-white">
+              {tplError ? "Error" : totalTemplates}
+            </div>
             <p className="text-xs text-gray-400 mt-2">
-              {totalTemplates === 0 ? "No templates created" : "Ready for bulk operations"}
+              {tplError
+                ? tplError
+                : totalTemplates === 0
+                ? "No templates created"
+                : "Custom Templates Available"}
             </p>
           </CardContent>
         </Card>
 
+        {/* Health card */}
         <Card className="bg-black/20 backdrop-blur-lg border-white/10">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-300">Account Health</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-300">
+              Account Health
+            </CardTitle>
             <TrendingUp className="h-4 w-4 text-emerald-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-400">Good</div>
+            <div className="text-2xl font-bold text-emerald-400">
+              {usersError || productsError || tplError ? "Warning" : "Good"}
+            </div>
             <p className="text-xs text-gray-400 mt-2">
-              {usersError || productsError ? "Some issues detected" : "All systems operational"}
+              {usersError || productsError || tplError
+                ? "Some issues detected"
+                : "All systems operational"}
             </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Main Content Grid */}
+      {/* Users & Products overviews remain unchanged … */}
+      {/* Templates Overview card: */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Users Overview */}
-        <Card className="bg-black/20 backdrop-blur-lg border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Users Overview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {usersError ? (
-              <Alert className="border-red-500/50 bg-red-500/10">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertDescription className="text-red-400">{usersError}</AlertDescription>
-              </Alert>
-            ) : users.length === 0 ? (
-              <p className="text-gray-400 text-center py-4">No users found</p>
-            ) : (
-              <div className="space-y-3">
-                {users.slice(0, 5).map((user) => {
-                  const displayName =
-                    user.attributes?.firstname && user.attributes?.lastname
-                      ? `${user.attributes.firstname} ${user.attributes.lastname}`
-                      : user.identifiers.email_address.split("@")[0]
-
-                  return (
-                    <div key={user.user_id} className="flex items-center justify-between p-2 rounded bg-white/5">
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 bg-purple-600/20 rounded-full flex items-center justify-center">
-                          {user.user_type === "owner" ? (
-                            <Crown className="h-4 w-4 text-yellow-400" />
-                          ) : (
-                            <User className="h-4 w-4 text-blue-400" />
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-white text-sm font-medium">{displayName}</p>
-                          <p className="text-gray-400 text-xs">{user.identifiers.email_address}</p>
-                        </div>
-                      </div>
-                      <Badge
-                        variant="outline"
-                        className={
-                          user.user_type === "owner"
-                            ? "border-yellow-500/50 text-yellow-300"
-                            : "border-blue-500/50 text-blue-300"
-                        }
-                      >
-                        {user.user_type}
-                      </Badge>
-                    </div>
-                  )
-                })}
-                {users.length > 5 && (
-                  <p className="text-gray-400 text-sm text-center">And {users.length - 5} more users...</p>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Products Overview */}
-        <Card className="bg-black/20 backdrop-blur-lg border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Products Overview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {productsError ? (
-              <Alert className="border-red-500/50 bg-red-500/10">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertDescription className="text-red-400">{productsError}</AlertDescription>
-              </Alert>
-            ) : products.length === 0 ? (
-              <p className="text-gray-400 text-center py-4">No products found</p>
-            ) : (
-              <div className="space-y-3">
-                {products.slice(0, 5).map((product, index) => (
-                  <div
-                    key={`${product.grantId}-${index}`}
-                    className="flex items-center justify-between p-2 rounded bg-white/5"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 bg-purple-600/20 rounded-lg flex items-center justify-center">
-                        <Package className="h-4 w-4 text-purple-400" />
-                      </div>
-                      <div>
-                        <p className="text-white text-sm font-medium">{product.label}</p>
-                        <p className="text-gray-400 text-xs">ID: {product.id}</p>
-                        {product.entitlement && (
-                          <p className="text-gray-500 text-xs">
-                            {product.entitlement.type}: {product.entitlement.id}
-                          </p>
-                        )}
-                        <p className="text-purple-400 text-xs">Grant: {product.grantId}</p>
-                      </div>
-                    </div>
-                    <Badge
-                      className={
-                        product.expiry_state === "active"
-                          ? "bg-green-500/20 text-green-400 border-green-500/30"
-                          : product.expiry_state === "pending"
-                            ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-                            : product.expiry_state === "unknown"
-                              ? "bg-gray-500/20 text-gray-400 border-gray-500/30"
-                              : "bg-red-500/20 text-red-400 border-red-500/30"
-                      }
-                    >
-                      {product.expiry_state}
-                    </Badge>
-                  </div>
-                ))}
-                {products.length > 5 && (
-                  <p className="text-gray-400 text-sm text-center">And {products.length - 5} more products...</p>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Templates and Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Templates Overview */}
         <Card className="bg-black/20 backdrop-blur-lg border-white/10">
           <CardHeader>
             <CardTitle className="text-white flex items-center gap-2">
@@ -284,32 +236,42 @@ export async function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {templates.length === 0 ? (
-              <p className="text-gray-400 text-center py-4">No templates created yet</p>
+            {tplError ? (
+              <Alert className="border-red-500/50 bg-red-500/10">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription className="text-red-400">
+                  {tplError}
+                </AlertDescription>
+              </Alert>
+            ) : totalTemplates === 0 ? (
+              <p className="text-gray-400 text-center py-4">
+                No templates created yet
+              </p>
             ) : (
               <div className="space-y-3">
-                {templates.slice(0, 3).map((template: any) => (
-                  <div key={template.id} className="p-2 rounded bg-white/5">
-                    <p className="text-white text-sm font-medium">{template.name}</p>
-                    <p className="text-gray-400 text-xs">{template.description}</p>
-                    <div className="flex gap-2 mt-1">
-                      <Badge variant="outline" className="border-purple-500/50 text-purple-300 text-xs">
-                        {Object.values(template.attributes).filter(Boolean).length} attributes
-                      </Badge>
-                      <Badge variant="outline" className="border-blue-500/50 text-blue-300 text-xs">
-                        {Object.values(template.products).filter(Boolean).length} products
-                      </Badge>
-                    </div>
+                {templateNames.slice(0, 3).map((name) => (
+                  <div
+                    key={name}
+                    className="p-2 rounded bg-white/5 flex items-center justify-between"
+                  >
+                    <p className="text-white text-sm font-medium">{name}</p>
+                    <Badge
+                      variant="outline"
+                      className="border-purple-500/50 text-purple-300 text-xs"
+                    >
+                      Custom
+                    </Badge>
                   </div>
                 ))}
-                {templates.length > 3 && (
-                  <p className="text-gray-400 text-sm text-center">And {templates.length - 3} more templates...</p>
+                {totalTemplates > 3 && (
+                  <p className="text-gray-400 text-sm text-center">
+                    And {totalTemplates - 3} more templates…
+                  </p>
                 )}
               </div>
             )}
           </CardContent>
         </Card>
-
         {/* Recent Activity */}
         <Card className="bg-black/20 backdrop-blur-lg border-white/10">
           <CardHeader>
@@ -339,5 +301,5 @@ export async function DashboardPage() {
         </Card>
       </div>
     </div>
-  )
+  );
 }

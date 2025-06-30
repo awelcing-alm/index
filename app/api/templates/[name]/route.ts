@@ -2,6 +2,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadTpl, saveTpl, deleteTpl } from "@/lib/blob";
 
+type StoredTpl = {
+  name: string
+  description?: string
+  attributes: Record<string, boolean>
+  overwriteFalse?: boolean   // add default true when undefined
+}
+
 /** helper – pull account id directly from the request’s cookies */
 const accountIdFrom = (req: NextRequest) =>
   req.cookies.get("active_account_id")?.value;

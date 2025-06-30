@@ -320,7 +320,7 @@ export async function DashboardPage() {
               </p>
             ) : (
               <div className="space-y-3">
-                {templates.slice(0, 3).map((t) => (
+                {templates.slice(0, 5).map((t) => (
                   <div
                     key={t.name}
                     className="p-2 rounded bg-white/5 flex flex-col gap-1"
@@ -346,9 +346,9 @@ export async function DashboardPage() {
                     </div>
                   </div>
                 ))}
-                {templates.length > 3 && (
+                {templates.length > 5 && (
                   <p className="text-gray-400 text-sm text-center">
-                    And {templates.length - 3} more templates…
+                    And {templates.length - 5} more templates…
                   </p>
                 )}
               </div>

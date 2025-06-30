@@ -1,23 +1,36 @@
-// lib/template-defaults.ts – three non‑overwritable default templates
-// Uses the full NEWSLETTER_KEYS list so every newsletter slug is represented.
+// lib/template-defaults.ts  – three non-overwritable default templates
 
 import { NEWSLETTER_KEYS } from "@/lib/newsletters"
+
+/* ------------------------------------------------------------------ */
+/* Shared types                                                       */
+/* ------------------------------------------------------------------ */
 
 export interface Template {
   name: string
   description: string
   attributes: Record<string, boolean>
-  products: Record<string, boolean>
-  createdAt: string
+  overwriteFalse: boolean        // NEW – controls “set others to false”
+  createdAt: string              // ISO for dashboards / sort
+  updatedAt?: string             // defaults omitted on hard-coded items
   isDefault: true
 }
 
-/* helper to start with everything false */
+/* ------------------------------------------------------------------ */
+/* Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
 const allFalse = (): Record<string, boolean> =>
   Object.fromEntries(NEWSLETTER_KEYS.map((k) => [k, false]))
 
-/* ---------------- Template: Top Content ---------------- */
-const topContentAttrs = {
+const TODAY = new Date().toISOString()
+
+/* ------------------------------------------------------------------ */
+/* Templates                                                          */
+/* ------------------------------------------------------------------ */
+
+/** 1. Top Content */
+const topContentAttrs: Record<string, boolean> = {
   ...allFalse(),
   "lawcom-leverage": true,
   "the-legal-intelligencer-weekly-case-alert": true,
@@ -40,8 +53,8 @@ const topContentAttrs = {
   "lawcom-newsroom-update": true,
 }
 
-/* ---------------- Template: Regional Updates ---------------- */
-const regionalAttrs = {
+/** 2. Regional Updates */
+const regionalAttrs: Record<string, boolean> = {
   ...allFalse(),
   "the-legal-intelligencer-weekly-case-alert": true,
   "new-jersey-law-journal-weekly-case-update": true,
@@ -63,32 +76,36 @@ const regionalAttrs = {
   "lawcom-new-york-newsroom-update": true,
 }
 
-/* ---------------- Template: No Newsletters ---------------- */
+/** 3. No Newsletters */
 const noNewsAttrs = allFalse()
+
+/* ------------------------------------------------------------------ */
+/* Export                                                             */
+/* ------------------------------------------------------------------ */
 
 export const DEFAULT_TEMPLATES: Template[] = [
   {
     name: "top-content",
     description: "Top Content newsletter bundle",
     attributes: topContentAttrs,
-    products: {},
-    createdAt: "",
+    overwriteFalse: true,
+    createdAt: TODAY,
     isDefault: true,
   },
   {
     name: "regional-updates",
     description: "Regional Updates newsletter bundle",
     attributes: regionalAttrs,
-    products: {},
-    createdAt: "",
+    overwriteFalse: true,
+    createdAt: TODAY,
     isDefault: true,
   },
   {
     name: "no-newsletters",
     description: "All newsletters turned off",
     attributes: noNewsAttrs,
-    products: {},
-    createdAt: "",
+    overwriteFalse: true,
+    createdAt: TODAY,
     isDefault: true,
   },
 ]

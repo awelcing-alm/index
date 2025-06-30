@@ -5,89 +5,181 @@ import type React from "react"
 import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, User, Save, AlertTriangle } from "lucide-react"
+import { Loader2, User, Save, AlertTriangle, FileText } from "lucide-react"
 import { getUserDetails, updateUserAttributes } from "@/lib/zephr-api"
 import type { ZephrUser } from "@/lib/zephr-api"
+import { NEWSLETTER_KEYS } from "@/lib/newsletters"
+import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 
-interface UserEditDialogProps {
+/* ---------- template helpers ---------- */
+interface TemplateResp {
+  name: string
+  description: string
+  overwriteFalse: boolean
+  attributes: Record<string, boolean>
+}
+
+const fetchTemplateNames = async (): Promise<string[]> =>
+  (await fetch("/api/templates")).json()
+
+const fetchTemplate = async (name: string): Promise<TemplateResp | null> => {
+  // default templates live in code, not in blob
+  const defaultHit = DEFAULT_TEMPLATES.find((d) => d.name === name)
+  if (defaultHit) return defaultHit as any
+  const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
+  return res.ok ? ((await res.json()) as TemplateResp) : null
+}
+
+const postTemplate = async (tpl: TemplateResp) =>
+  fetch("/api/templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tpl),
+  })
+
+/* ---------- component ---------- */
+interface Props {
   userId: string
   userEmail: string
   children: React.ReactNode
   onUserUpdated?: () => void
 }
 
-export function UserEditDialog({ userId, userEmail, children, onUserUpdated }: UserEditDialogProps) {
+export function UserEditDialog({
+  userId,
+  userEmail,
+  children,
+  onUserUpdated,
+}: Props) {
   const [open, setOpen] = useState(false)
   const [user, setUser] = useState<ZephrUser | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [editedAttributes, setEditedAttributes] = useState<Record<string, any>>({})
+  const [edited, setEdited] = useState<Record<string, any>>({})
 
-  const loadUserDetails = async () => {
-    if (!open || user) return
+  /* ------ templates ------- */
+  const [tplNames, setTplNames] = useState<string[]>([])
+  const [tplErr, setTplErr] = useState<string | null>(null)
 
-    setLoading(true)
-    setError(null)
-
-    try {
-      console.log("Loading user details for:", userId)
-      const userDetails = await getUserDetails(userId)
-      console.log("Loaded user details:", userDetails)
-      setUser(userDetails)
-      setEditedAttributes(userDetails.attributes || {})
-    } catch (err) {
-      console.error("Error loading user details:", err)
-      setError(err instanceof Error ? err.message : "Failed to load user details")
-    } finally {
-      setLoading(false)
-    }
-  }
-
+  /* load template list once dialog opens */
   useEffect(() => {
-    if (open) {
-      loadUserDetails()
-    } else {
-      // Reset state when dialog closes
-      setUser(null)
-      setEditedAttributes({})
-      setError(null)
-    }
+    if (!open) return
+      ; (async () => {
+        try {
+          const names = await fetchTemplateNames()
+          const combined = Array.from(
+            new Set([...DEFAULT_TEMPLATES.map((d) => d.name), ...names]),
+          ).sort()
+          setTplNames(combined)
+        } catch (e) {
+          console.error(e)
+          setTplErr("Template list failed")
+        }
+      })()
+  }, [open])
+
+  /* load user details on open */
+  useEffect(() => {
+    if (!open) return
+      ; (async () => {
+        setLoading(true)
+        setError(null)
+        try {
+          const details = await getUserDetails(userId)
+          setUser(details)
+          setEdited(details.attributes || {})
+        } catch (e) {
+          console.error(e)
+          setError("Unable to load user")
+        } finally {
+          setLoading(false)
+        }
+      })()
   }, [open, userId])
 
-  const handleAttributeChange = (key: string, value: string) => {
-    setEditedAttributes((prev) => ({
-      ...prev,
-      [key]: value,
-    }))
+  /* reset when closed */
+  useEffect(() => {
+    if (!open) {
+      setUser(null)
+      setEdited({})
+      setError(null)
+    }
+  }, [open])
+
+  /* -------- handlers -------- */
+  const handleAttrChange = (k: string, v: any) =>
+    setEdited((p) => ({ ...p, [k]: v }))
+
+  const applyTemplate = async (name: string) => {
+    if (!name) return
+    const tpl = await fetchTemplate(name)
+    if (!tpl) return
+    setEdited((prev) => {
+      // start from previous, then add / overwrite true keys
+      const next = { ...prev, ...tpl.attributes }
+      if (tpl.overwriteFalse) {
+        // for all newsletters not in tpl.attributes make them false
+        NEWSLETTER_KEYS.forEach((slug) => {
+          if (!(slug in tpl.attributes)) next[slug] = false
+        })
+      }
+      return next
+    })
+  }
+
+  const saveTemplateFromUser = async () => {
+    if (!user) return
+    const tpl: TemplateResp = {
+      name: userEmail,
+      description: `Template captured from ${userEmail}`,
+      overwriteFalse: true,
+      attributes: NEWSLETTER_KEYS.reduce<Record<string, boolean>>(
+        (acc, key) => {
+          if (key in edited) acc[key] = !!edited[key]
+          return acc
+        },
+        {},
+      ),
+    }
+    try {
+      await postTemplate(tpl)
+      if (!tplNames.includes(tpl.name))
+        setTplNames((prev) => [...prev, tpl.name].sort())
+    } catch (e) {
+      console.error("Save template failed", e)
+      setError("Could not save template")
+    }
   }
 
   const handleSave = async () => {
     if (!user) return
-
     setSaving(true)
     setError(null)
-
     try {
-      console.log("Saving user attributes:", editedAttributes)
-      await updateUserAttributes(userId, editedAttributes)
-      setUser((prev) => (prev ? { ...prev, attributes: editedAttributes } : null))
+      await updateUserAttributes(userId, edited)
       onUserUpdated?.()
       setOpen(false)
-    } catch (err) {
-      console.error("Error updating user:", err)
-      setError(err instanceof Error ? err.message : "Failed to update user")
+    } catch (e) {
+      console.error(e)
+      setError("Failed to update user")
     } finally {
       setSaving(false)
     }
   }
 
-  const hasChanges = user && JSON.stringify(editedAttributes) !== JSON.stringify(user.attributes || {})
+  const changed =
+    user &&
+    JSON.stringify(edited) !== JSON.stringify(user.attributes || {})
 
+  /* ---------- UI ---------- */
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
@@ -95,130 +187,117 @@ export function UserEditDialog({ userId, userEmail, children, onUserUpdated }: U
         <DialogHeader>
           <DialogTitle className="text-white flex items-center gap-2">
             <User className="h-5 w-5" />
-            Edit User Details
+            Edit User • {userEmail}
           </DialogTitle>
         </DialogHeader>
 
+        {/* template selector */}
+        <div className="mb-4">
+          <Label className="text-gray-300 mb-1 block">Apply Template</Label>
+          {tplErr ? (
+            <p className="text-xs text-red-400">{tplErr}</p>
+          ) : tplNames.length === 0 ? (
+            <Badge>No templates</Badge>
+          ) : (
+            <Select onValueChange={applyTemplate}>
+              <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                <SelectValue placeholder="Choose template…" />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-900 border-white/10">
+                {tplNames.map((n) => (
+                  <SelectItem
+                    key={n}
+                    value={n}
+                    className="text-white capitalize hover:bg-white/10 focus:bg-white/10"
+                  >
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={saveTemplateFromUser}
+            className="mt-2 border-purple-500/50 text-purple-300"
+          >
+            <FileText className="h-3 w-3 mr-1" /> Save as Template
+          </Button>
+        </div>
+
+        {/* status */}
         {loading ? (
-          <div className="flex items-center justify-center py-8">
+          <div className="flex items-center justify-center py-6">
             <Loader2 className="h-6 w-6 animate-spin text-purple-400" />
-            <span className="ml-2 text-gray-300">Loading user details...</span>
           </div>
         ) : error ? (
           <Alert className="border-red-500/50 bg-red-500/10">
             <AlertTriangle className="h-4 w-4" />
-            <AlertDescription className="text-red-400">{error}</AlertDescription>
+            <AlertDescription className="text-red-400">
+              {error}
+            </AlertDescription>
           </Alert>
-        ) : user ? (
-          <div className="space-y-6">
-            {/* User Info */}
-            <Card className="bg-black/20 border-white/10">
+        ) : null}
+
+        {/* main form */}
+        {user && !loading && (
+          <>
+            <Card className="bg-black/20 border-white/10 mb-6">
               <CardHeader>
-                <CardTitle className="text-white text-lg">User Information</CardTitle>
+                <CardTitle className="text-white text-lg">
+                  Attributes
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-gray-300">User ID</Label>
-                    <p className="text-white font-medium font-mono text-sm">{user.user_id}</p>
+                {NEWSLETTER_KEYS.map((slug) => (
+                  <div key={slug} className="flex items-center gap-2">
+                    <Checkbox
+                      checked={!!edited[slug]}
+                      onCheckedChange={(v) =>
+                        handleAttrChange(slug, v === true)
+                      }
+                    />
+                    <Label className="text-gray-300 capitalize">
+                      {slug.replace(/-/g, " ")}
+                    </Label>
                   </div>
-                  <div>
-                    <Label className="text-gray-300">Email Address</Label>
-                    <p className="text-white font-medium">{user.identifiers.email_address}</p>
-                  </div>
-                  <div>
-                    <Label className="text-gray-300">Email Verified</Label>
-                    <p className="text-white font-medium">{user.email_verified ? "Yes" : "No"}</p>
-                  </div>
-                  {user.created_date && (
-                    <div>
-                      <Label className="text-gray-300">Created Date</Label>
-                      <p className="text-white font-medium text-sm">
-                        {new Date(user.created_date).toLocaleDateString()}
-                      </p>
+                ))}
+
+                {/* Extra (non-newsletter) attributes */}
+                {Object.entries(edited)
+                  .filter(([k]) => !(NEWSLETTER_KEYS as readonly string[]).includes(k as string)).map(([key, val]) => (
+                    <div key={key}>
+                      <Label className="text-gray-300">{key}</Label>
+                      <Input
+                        value={val ?? ""}
+                        onChange={(e) =>
+                          handleAttrChange(key, e.target.value)
+                        }
+                        className="bg-white/5 border-white/10 text-white"
+                      />
                     </div>
-                  )}
-                </div>
+                  ))}
               </CardContent>
             </Card>
 
-            {/* Editable Attributes */}
-            <Card className="bg-black/20 border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white text-lg">User Attributes</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {Object.keys(editedAttributes).length === 0 ? (
-                  <div className="text-center py-4">
-                    <p className="text-gray-400 mb-2">No attributes found for this user.</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="border-purple-500/50 text-purple-300 hover:bg-purple-500/20"
-                      onClick={() => {
-                        const newKey = prompt("Enter attribute name:")
-                        if (newKey && !editedAttributes.hasOwnProperty(newKey)) {
-                          handleAttributeChange(newKey, "")
-                        }
-                      }}
-                    >
-                      Add First Attribute
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-4">
-                    {Object.entries(editedAttributes).map(([key, value]) => (
-                      <div key={key}>
-                        <Label htmlFor={key} className="text-gray-300 capitalize">
-                          {key.replace(/_/g, " ")}
-                        </Label>
-                        <Input
-                          id={key}
-                          value={value || ""}
-                          onChange={(e) => handleAttributeChange(key, e.target.value)}
-                          className="bg-white/5 border-white/10 text-white"
-                          placeholder={`Enter ${key.replace(/_/g, " ")}`}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Add new attribute section */}
-                {Object.keys(editedAttributes).length > 0 && (
-                  <div className="pt-4 border-t border-white/10">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="border-purple-500/50 text-purple-300 hover:bg-purple-500/20"
-                      onClick={() => {
-                        const newKey = prompt("Enter attribute name:")
-                        if (newKey && !editedAttributes.hasOwnProperty(newKey)) {
-                          handleAttributeChange(newKey, "")
-                        }
-                      }}
-                    >
-                      Add Attribute
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Actions */}
             <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setOpen(false)} className="border-white/20 text-white">
+              <Button
+                variant="outline"
+                onClick={() => setOpen(false)}
+                className="border-white/20 text-white"
+              >
                 Cancel
               </Button>
               <Button
+                disabled={!changed || saving}
                 onClick={handleSave}
-                disabled={!hasChanges || saving}
                 className="bg-purple-600 hover:bg-purple-700 text-white"
               >
                 {saving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
+                    Saving…
                   </>
                 ) : (
                   <>
@@ -228,8 +307,8 @@ export function UserEditDialog({ userId, userEmail, children, onUserUpdated }: U
                 )}
               </Button>
             </div>
-          </div>
-        ) : null}
+          </>
+        )}
       </DialogContent>
     </Dialog>
   )

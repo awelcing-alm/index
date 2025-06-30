@@ -46,3 +46,11 @@ export async function listTpls(acc: string): Promise<string[]> {
 
 /* -------------------------- DELETE -------------------------------- */
 export const deleteTpl = (acc: string, name: string) => del(tplKey(acc, name), { token })
+
+export async function listTplsWithMeta(acc: string) {
+  const { blobs } = await list({ prefix: `${PREFIX}/${acc}/`, token })
+  return blobs.map((b) => ({
+    name: b.pathname.split("/").pop()!.replace(/\.json$/, ""),
+    uploadedAt: b.uploadedAt,          // provided by Vercel Blob SDK
+  }))
+}

@@ -1,40 +1,41 @@
 "use server"
 
-import { getUserDetails, updateUserAttributes } from "./user-api"
+import { adminApiCall } from "./zephr-api"
+import { getUserDetails } from "./user-api"
 
 export async function getUserDetailsAction(userId: string) {
   try {
-    console.log(`[getUserDetailsAction] Server action: Getting details for user ${userId}`)
+    console.log("[getUserDetailsAction] ↗ GET", userId)
     const user = await getUserDetails(userId)
-    console.log(`[getUserDetailsAction] Successfully retrieved user:`, JSON.stringify(user, null, 2))
     return { success: true, data: user }
-  } catch (error) {
-    console.error(`[getUserDetailsAction] Server action error:`, error)
-
-    // Return more detailed error information
-    const errorMessage = error instanceof Error ? error.message : "Failed to get user details"
-    const errorDetails = error instanceof Error ? error.stack : String(error)
-
-    console.error(`[getUserDetailsAction] Full error details:`, errorDetails)
-
+  } catch (err: any) {
+    console.error("[getUserDetailsAction] error:", err)
     return {
       success: false,
-      error: errorMessage,
-      details: errorDetails,
+      error: err?.message ?? "Failed to get user details",
+      details: String(err),
     }
   }
 }
 
-export async function updateUserAttributesAction(userId: string, attributes: Record<string, any>) {
+export async function updateUserAttributesAction(
+  userId: string,
+  attributes: Record<string, any>,
+) {
   try {
-    console.log(`[updateUserAttributesAction] Server action: Updating attributes for user ${userId}`, attributes)
-    await updateUserAttributes(userId, attributes)
+    console.log("[updateUserAttributesAction] ↗ PATCH", userId, attributes)
+
+    await adminApiCall(`/v3/users/${userId}/attributes`, {
+      method: "PATCH",
+      body: JSON.stringify(attributes),
+    })
+
     return { success: true }
-  } catch (error) {
-    console.error(`[updateUserAttributesAction] Server action error:`, error)
+  } catch (err: any) {
+    console.error("[updateUserAttributesAction] error:", err)
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Failed to update user attributes",
+      error: err?.message ?? "Failed to update user attributes",
     }
   }
 }

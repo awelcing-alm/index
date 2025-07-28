@@ -71,7 +71,6 @@ export default function TemplateBuilderPage() {
   const [saved, setSaved] = useState<string>("")
   const accId = getActiveAccountId()
 
-  /* -------- load on mount / account change -------- */
   useEffect(() => {
     if (!accId) return
     ;(async () => {
@@ -87,13 +86,10 @@ export default function TemplateBuilderPage() {
     })()
   }, [accId])
 
-  /* -------- helper to build attributes -------- */
   const buildAttributePayload = (): Record<string, boolean> => {
     if (!current.overwriteFalse) {
-      // Only include keys the editor explicitly touched (truthy or falsy)
       return { ...current.attributes }
     }
-    // Include every newsletter key, defaulting to false
     const full: Record<string, boolean> = {}
     NEWSLETTER_KEYS.forEach((slug) => {
       full[slug] = current.attributes[slug] || false
@@ -101,7 +97,6 @@ export default function TemplateBuilderPage() {
     return full
   }
 
-  /* -------- save -------- */
   const saveCurrent = async () => {
     if (!current.name.trim()) return alert("Template needs a name")
 
@@ -137,11 +132,9 @@ export default function TemplateBuilderPage() {
     setIsEditing(false)
   }
 
-  /* -------- derived -------- */
   const attrChecked = (k: string) => current.attributes[k] || false
   const attrCount = Object.values(current.attributes).filter(Boolean).length
 
-  /* -------- render -------- */
   return (
     <div className="space-y-6">
       <Card className="bg-black/20 backdrop-blur border-white/10">
@@ -173,7 +166,6 @@ export default function TemplateBuilderPage() {
                 </Alert>
               )}
 
-              {/* meta */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <Label>Name</Label>
@@ -204,14 +196,13 @@ export default function TemplateBuilderPage() {
                   }
                 />
                 <Label className="text-gray-300">
-                  Set <em>all unchecked</em> newsletters to{" "}
-                  <span className="font-semibold">false</span> when applied
+                  Include <em>all</em> newsletter keys (unchecked ={" "}
+                  <span className="font-semibold">false</span>)
                 </Label>
               </div>
 
               <Badge>{attrCount} attributes selected</Badge>
 
-              {/* attributes */}
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3 bg-white/5 p-4 border border-white/10 rounded">
                 {NEWSLETTER_KEYS.map((slug) => (
                   <div key={slug} className="flex items-center space-x-2">

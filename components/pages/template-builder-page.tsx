@@ -18,7 +18,7 @@ import {
   CheckCircle,
 } from "lucide-react"
 import { NEWSLETTER_KEYS } from "@/lib/newsletters"
-import { getActiveAccountId } from "@/lib/account-api"
+import { getActiveAccountId } from "@/lib/account-store"
 import { DefaultTemplatesSection } from "@/components/pages/default-templates-section"
 
 /* ---------------- types ---------------- */
@@ -135,204 +135,206 @@ export default function TemplateBuilderPage() {
   const attrChecked = (k: string) => current.attributes[k] || false
   const attrCount = Object.values(current.attributes).filter(Boolean).length
 
-  return (
-    <div className="space-y-6">
-      <Card className="bg-black/20 backdrop-blur border-white/10">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-white text-2xl">
-            <FileText className="h-6 w-6" /> Template Builder
-          </CardTitle>
-          <p className="text-gray-400">
-            Create, save and apply custom templates
-          </p>
-        </CardHeader>
-        <CardContent>
-          <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
-            <TabsList className="grid grid-cols-2 border-b border-white/10 bg-transparent">
-              <TabsTrigger value="create">
-                {isEditing ? "Edit" : "Create"}
-              </TabsTrigger>
-              <TabsTrigger value="manage">Manage</TabsTrigger>
-            </TabsList>
+return (
+  <div className="space-y-6">
+    <Card className="rounded-none border border-line bg-paper">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 font-serif text-2xl text-ink">
+          <FileText className="h-6 w-6" aria-hidden="true" />
+          Template Builder
+        </CardTitle>
+        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+          Create, save and apply custom templates
+        </p>
+      </CardHeader>
 
-            {/* ---------- CREATE / EDIT ---------- */}
-            <TabsContent value="create" className="mt-6 space-y-6">
-              {saved && (
-                <Alert className="border-green-500/50 bg-green-500/10 flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-400" />
-                  <AlertDescription className="text-green-300">
-                    {saved}
-                  </AlertDescription>
-                </Alert>
-              )}
+      <CardContent>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+          <TabsList className="grid grid-cols-2 rounded-none border-b border-line bg-transparent p-0">
+            <TabsTrigger value="create" className="rounded-none">
+              {isEditing ? "Edit" : "Create"}
+            </TabsTrigger>
+            <TabsTrigger value="manage" className="rounded-none">
+              Manage
+            </TabsTrigger>
+          </TabsList>
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <Label>Name</Label>
-                  <Input
-                    value={current.name}
-                    onChange={(e) =>
-                      setCurrent({ ...current, name: e.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label>Description</Label>
-                  <Input
-                    value={current.description}
-                    onChange={(e) =>
-                      setCurrent({ ...current, description: e.target.value })
-                    }
-                  />
-                </div>
-              </div>
+          {/* ---------- CREATE / EDIT ---------- */}
+          <TabsContent value="create" className="mt-6 space-y-6">
+            {saved && (
+              <Alert className="flex items-center gap-2 rounded-none border border-line bg-[hsl(var(--secondary))]/20">
+                <CheckCircle className="h-4 w-4 text-ink" aria-hidden="true" />
+                <AlertDescription className="text-ink">{saved}</AlertDescription>
+              </Alert>
+            )}
 
-              {/* overwrite toggle */}
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  checked={current.overwriteFalse}
-                  onCheckedChange={(v) =>
-                    setCurrent((p) => ({ ...p, overwriteFalse: v === true }))
-                  }
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label className="text-[hsl(var(--muted-foreground))]">Name</Label>
+                <Input
+                  value={current.name}
+                  onChange={(e) => setCurrent({ ...current, name: e.target.value })}
+                  className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
                 />
-                <Label className="text-gray-300">
-                  Include <em>all</em> newsletter keys (unchecked ={" "}
-                  <span className="font-semibold">false</span>)
-                </Label>
               </div>
-
-              <Badge>{attrCount} attributes selected</Badge>
-
-              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3 bg-white/5 p-4 border border-white/10 rounded">
-                {NEWSLETTER_KEYS.map((slug) => (
-                  <div key={slug} className="flex items-center space-x-2">
-                    <Checkbox
-                      checked={attrChecked(slug)}
-                      onCheckedChange={(v) =>
-                        setCurrent((p) => ({
-                          ...p,
-                          attributes: {
-                            ...p.attributes,
-                            [slug]: v === true,
-                          },
-                        }))
-                      }
-                    />
-                    <Label className="text-gray-300 capitalize cursor-pointer">
-                      {slug.replace(/-/g, " ")}
-                    </Label>
-                  </div>
-                ))}
+              <div>
+                <Label className="text-[hsl(var(--muted-foreground))]">Description</Label>
+                <Input
+                  value={current.description}
+                  onChange={(e) => setCurrent({ ...current, description: e.target.value })}
+                  className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
+                />
               </div>
+            </div>
 
-              <div className="flex gap-3">
-                <Button onClick={saveCurrent} className="flex items-center gap-2">
-                  <Save className="h-4 w-4" />{" "}
-                  {isEditing ? "Update" : "Save"}
-                </Button>
-                {isEditing && (
-                  <Button variant="outline" onClick={reset}>
-                    Cancel
-                  </Button>
-                )}
-              </div>
-            </TabsContent>
+            {/* overwrite toggle */}
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={current.overwriteFalse}
+                onCheckedChange={(v) => setCurrent((p) => ({ ...p, overwriteFalse: v === true }))}
+                className="rounded-none"
+              />
+              <Label className="text-[hsl(var(--muted-foreground))]">
+                Include <em>all</em> newsletter keys (unchecked = <span className="font-semibold">false</span>)
+              </Label>
+            </div>
 
-            {/* ---------- MANAGE ---------- */}
-            <TabsContent value="manage" className="mt-6 space-y-4">
-              <DefaultTemplatesSection />
+            <Badge className="rounded-none border border-line bg-[hsl(var(--muted))] text-ink">
+              {attrCount} attributes selected
+            </Badge>
 
-              {templates.length === 0 && (
-                <Alert>
-                  <Sparkles className="h-4 w-4" />
-                  <AlertDescription>
-                    No custom templates yet. Create one in the Create tab.
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {templates.map((tpl) => (
-                <Card key={tpl.name} className="bg-white/5 border-white/10">
-                  <CardContent className="p-4 flex items-center justify-between">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg text-white capitalize">
-                          {tpl.name}
-                        </h3>
-                        <Badge
-                          variant="outline"
-                          className="text-xs text-yellow-300 border-yellow-400/50"
-                        >
-                          Custom
-                        </Badge>
-                        {tpl.overwriteFalse && (
-                          <Badge
-                            variant="outline"
-                            className="text-xs text-purple-300 border-purple-400/50"
-                          >
-                            Overwrites&nbsp;false
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-400">
-                        Created:{" "}
-                        {new Date(tpl.createdAt).toLocaleDateString()}{" "}
-                        {tpl.updatedAt &&
-                          `(Updated ${new Date(
-                            tpl.updatedAt,
-                          ).toLocaleDateString()})`}
-                      </p>
-                      <p
-                        className="text-sm text-gray-300 max-w-md truncate"
-                        title={tpl.description}
-                      >
-                        {tpl.description}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setCurrent(tpl)
-                          setIsEditing(true)
-                          setTab("create")
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setCurrent({
-                            ...tpl,
-                            name: `${tpl.name}-copy`,
-                            createdAt: "",
-                            updatedAt: undefined,
-                          })
-                          setIsEditing(false)
-                          setTab("create")
-                        }}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-red-400"
-                        onClick={() => deleteTpl(tpl.name)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
+            <div className="grid gap-3 rounded-none border border-line bg-paper p-4 sm:grid-cols-2 md:grid-cols-3">
+              {NEWSLETTER_KEYS.map((slug) => (
+                <div key={slug} className="flex items-center space-x-2">
+                  <Checkbox
+                    checked={attrChecked(slug)}
+                    onCheckedChange={(v) =>
+                      setCurrent((p) => ({
+                        ...p,
+                        attributes: { ...p.attributes, [slug]: v === true },
+                      }))
+                    }
+                    className="rounded-none"
+                  />
+                  <Label className="cursor-pointer capitalize text-[hsl(var(--muted-foreground))]">
+                    {slug.replace(/-/g, " ")}
+                  </Label>
+                </div>
               ))}
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
-    </div>
-  )
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={saveCurrent}
+                className="rounded-none bg-ink text-paper hover:bg-ink/90"
+              >
+                <Save className="mr-2 h-4 w-4" />
+                {isEditing ? "Update" : "Save"}
+              </Button>
+
+              {isEditing && (
+                <Button
+                  variant="outline"
+                  onClick={reset}
+                  className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ---------- MANAGE ---------- */}
+          <TabsContent value="manage" className="mt-6 space-y-4">
+            <DefaultTemplatesSection />
+
+            {templates.length === 0 && (
+              <Alert className="rounded-none border border-line bg-[hsl(var(--muted))]">
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                <AlertDescription className="text-ink">
+                  No custom templates yet. Create one in the Create tab.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {templates.map((tpl) => (
+              <Card key={tpl.name} className="rounded-none border border-line bg-paper">
+                <CardContent className="flex items-center justify-between p-4">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-serif text-lg text-ink capitalize">{tpl.name}</h3>
+
+                      <Badge variant="outline" className="rounded-none border-line text-xs text-ink">
+                        Custom
+                      </Badge>
+
+                      {tpl.overwriteFalse && (
+                        <Badge variant="outline" className="rounded-none border-line text-xs text-ink">
+                          Overwrites&nbsp;false
+                        </Badge>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      Created: {new Date(tpl.createdAt).toLocaleDateString()}{" "}
+                      {tpl.updatedAt && `(Updated ${new Date(tpl.updatedAt).toLocaleDateString()})`}
+                    </p>
+
+                    <p className="max-w-md truncate text-sm text-[hsl(var(--muted-foreground))]" title={tpl.description}>
+                      {tpl.description}
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setCurrent(tpl);
+                        setIsEditing(true);
+                        setTab("create");
+                      }}
+                      className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                    >
+                      Edit
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setCurrent({
+                          ...tpl,
+                          name: `${tpl.name}-copy`,
+                          createdAt: "",
+                          updatedAt: undefined,
+                        });
+                        setIsEditing(false);
+                        setTab("create");
+                      }}
+                      className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                      title="Duplicate template"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="rounded-none text-[hsl(var(--destructive))] hover:bg-[hsl(var(--muted))]"
+                      onClick={() => deleteTpl(tpl.name)}
+                      title="Delete template"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  </div>
+);
 }

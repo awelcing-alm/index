@@ -2,37 +2,128 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --font-serif: 'EB Garamond', Georgia, ui-serif, serif;
+  --font-sans: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Optional utility */
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+}
+
+/* ===== Base theme tokens (HSL) – “legal newspaper” ===== */
 @layer base {
   :root {
-    /* Lift global dark tones by ~4% lightness */
-    --background: 222.2 84% 8.9%;        /* was 4.9% */
-    --card:       222.2 84% 8.9%;
-    --popover:    222.2 84% 8.9%;
-    --secondary:  217.2 32.6% 21.5%;      /* was 17.5% */
-    --muted:      217.2 32.6% 21.5%;
-    --accent:     217.2 32.6% 21.5%;
+    /* Paper & ink */
+    --background: 40 57% 97%;          /* #FDF9F3 */
+    --foreground: 30 5% 11%;           /* #1C1B1A */
 
-    /* foregrounds remain unchanged for contrast */
-    --foreground: 210 40% 98%;
-    --card-foreground: 210 40% 98%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary-foreground: 210 40% 98%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 21.5%;
-    --input: 217.2 32.6% 21.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --radius: 0.5rem;
+    /* Surfaces */
+    --card: 40 57% 97%;
+    --card-foreground: 30 5% 11%;
+    --popover: 40 57% 97%;
+    --popover-foreground: 30 5% 11%;
+
+    /* Brand */
+    --primary: 30 5% 11%;              /* ink */
+    --primary-foreground: 40 57% 97%;  /* paper */
+
+    /* Accents / helpers */
+    --secondary: 44 41% 59%;           /* gold */
+    --secondary-foreground: 30 5% 11%;
+    --muted: 40 25% 92%;               /* pale paper */
+    --muted-foreground: 30 6% 24%;
+    --accent: 8 38% 25%;               /* burgundy */
+    --accent-foreground: 40 57% 97%;
+
+    /* Status */
+    --destructive: 0 75% 26%;
+    --destructive-foreground: 40 57% 97%;
+
+    /* Lines / inputs / focus */
+    --border: 30 10% 84%;              /* #D9D6D2 */
+    --input: 30 10% 84%;
+    --ring: 44 41% 59%;                /* gold */
+
+    /* Charts (can override per-app if needed) */
+    --chart-1: 30 5% 11%;              /* ink */
+    --chart-2: 8 38% 25%;              /* burgundy */
+    --chart-3: 44 41% 59%;             /* gold */
+    --chart-4: 140 13% 27%;            /* lawgreen-ish */
+    --chart-5: 30 12% 60%;             /* neutral */
+
+    /* Radius = crisp by default */
+    --radius: 0px;
+
+    /* Sidebar namespace (kept for compatibility) */
+    --sidebar-background: 40 57% 97%;
+    --sidebar-foreground: 30 5% 11%;
+    --sidebar-primary: 30 5% 11%;
+    --sidebar-primary-foreground: 40 57% 97%;
+    --sidebar-accent: 44 41% 59%;
+    --sidebar-accent-foreground: 30 5% 11%;
+    --sidebar-border: 30 10% 84%;
+    --sidebar-ring: 44 41% 59%;
   }
 
-  * {
-    @apply border-border;
+  /* Dark mode: keep contrast and austerity */
+  .dark {
+    --background: 30 5% 8%;
+    --foreground: 40 20% 96%;
+
+    --card: 30 5% 8%;
+    --card-foreground: 40 20% 96%;
+    --popover: 30 5% 8%;
+    --popover-foreground: 40 20% 96%;
+
+    --primary: 40 20% 96%;
+    --primary-foreground: 30 5% 8%;
+
+    --secondary: 44 20% 45%;
+    --secondary-foreground: 30 5% 8%;
+
+    --muted: 30 7% 16%;
+    --muted-foreground: 40 14% 74%;
+
+    --accent: 8 40% 35%;
+    --accent-foreground: 40 20% 96%;
+
+    --destructive: 0 62% 38%;
+    --destructive-foreground: 40 20% 96%;
+
+    --border: 30 7% 20%;
+    --input: 30 7% 20%;
+    --ring: 44 41% 59%;
+
+    --chart-1: 40 20% 96%;
+    --chart-2: 8 40% 60%;
+    --chart-3: 44 41% 59%;
+    --chart-4: 140 13% 45%;
+    --chart-5: 30 12% 60%;
+
+    --sidebar-background: 30 5% 8%;
+    --sidebar-foreground: 40 20% 96%;
+    --sidebar-primary: 44 41% 59%;
+    --sidebar-primary-foreground: 30 5% 8%;
+    --sidebar-accent: 30 7% 16%;
+    --sidebar-accent-foreground: 40 20% 96%;
+    --sidebar-border: 30 7% 16%;
+    --sidebar-ring: 44 41% 59%;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
+}
+
+/* Base element styling */
+@layer base {
+  * { @apply border-border; }
+  html, body { height: 100%; }
+  body { @apply bg-background text-foreground; }
+
+  /* Newspaper feel */
+  h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 500; }
+  .newspaper { letter-spacing: 0.01em; }
+  .rule { border-top: 1px solid hsl(var(--border)); }
+  .panel { @apply bg-background border border-border shadow-panel; }
+  a { text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  :focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 }

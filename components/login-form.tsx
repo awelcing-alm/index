@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -22,20 +21,13 @@ export function LoginForm() {
     e.preventDefault()
     setIsLoading(true)
     setError("")
-
     try {
-      const result = await loginUser(email, password)
-
+      const result = await loginUser(email.trim(), password)
       if (result.success) {
-        if (result.isAdmin) {
-          router.push("/")
-        } else {
-          setError("Access denied. Admin privileges required.")
-        }
-      } else {
-        setError(result.error || "Login failed")
-      }
-    } catch (err) {
+        if (result.isAdmin) router.push("/")
+        else setError("Access denied. Admin privileges required.")
+      } else setError(result.error || "Login failed")
+    } catch {
       setError("An unexpected error occurred")
     } finally {
       setIsLoading(false)
@@ -43,45 +35,59 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form
+      onSubmit={handleSubmit}
+      className="mx-auto w-full max-w-sm space-y-6 rounded-none border border-line bg-paper p-6"
+    >
+
       {error && (
-        <Alert className="border-red-500/50 bg-red-500/10">
-          <AlertDescription className="text-red-400">{error}</AlertDescription>
+        <Alert className="rounded-none border border-[hsl(var(--destructive))] bg-[hsl(var(--destructive))]/10">
+          <AlertDescription className="text-[hsl(var(--destructive))]">
+            {error}
+          </AlertDescription>
         </Alert>
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="email" className="text-white">
+<Label htmlFor="email" className="text-gray-800 dark:text-white">
           Email
         </Label>
         <div className="relative">
-          <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+          <Mail
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--muted-foreground))]"
+            aria-hidden="true"
+          />
           <Input
             id="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email"
-            className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-gray-400 focus:border-purple-500"
+            placeholder="you@company.com"
+            className="rounded-none border border-line bg-paper pl-10 text-ink placeholder:text-[hsl(var(--muted-foreground))] focus:border-ink focus:ring-0"
             required
+            autoComplete="username"
           />
         </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="password" className="text-white">
+        <Label htmlFor="password" className="text-ink">
           Password
         </Label>
         <div className="relative">
-          <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+          <Lock
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--muted-foreground))]"
+            aria-hidden="true"
+          />
           <Input
             id="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-gray-400 focus:border-purple-500"
+            placeholder="••••••••"
+            className="rounded-none border border-line bg-paper pl-10 text-ink placeholder:text-[hsl(var(--muted-foreground))] focus:border-ink focus:ring-0"
             required
+            autoComplete="current-password"
           />
         </div>
       </div>
@@ -89,17 +95,21 @@ export function LoginForm() {
       <Button
         type="submit"
         disabled={isLoading}
-        className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-all duration-200"
+        className="w-full rounded-none bg-ink text-paper hover:bg-ink/90 disabled:opacity-60"
       >
         {isLoading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Signing in...
+            Signing in…
           </>
         ) : (
           "Sign In"
         )}
       </Button>
+
+      <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
+        Administrator access required
+      </p>
     </form>
   )
 }

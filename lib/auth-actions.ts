@@ -6,9 +6,8 @@ import { getUsersByAccount } from "./user-api"
 import { getAccountsByOwner } from "./account-api"
 import { getProductsByAccount } from "./product-api"
 import { publicApiCall } from "./public-api"
-import type { ZephrAccount } from "./account-api"
-import type { ZephrUser } from "./user-api"
-import type { ZephrProduct } from "./product-api"
+import type { ZephrAccount, ZephrUser, ZephrProduct } from "@/lib/zephr-types" 
+
 import { adminApiCall } from "./api-client"
 
 export interface LoginResult {

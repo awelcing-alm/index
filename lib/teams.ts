@@ -1,151 +1,154 @@
 // lib/teams.ts
-// ───────────────────────────────────────────────────────────
-// Postgres helpers for the Teams feature
-// ───────────────────────────────────────────────────────────
-
-import { sql } from "@vercel/postgres"
-import { saveTeamBlob } from "@/lib/team-blob"
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                             */
-/* ------------------------------------------------------------------ */
-
+import { sql } from "@/lib/db"
+/**
+ * Public Team shape used across the app.
+ * Keep member_count DERIVED ONLY (never stored in DB).
+ */
 export interface Team {
+  account_id: string
   id: string
   slug: string
   name: string
   color: string | null
   icon: string | null
-  default_template?: string | null
-  product_grant_ids?: string[] | null
-
-  /* ——— virtual fields ——— */
-  members?: string[]
+  default_template: string | null
+  product_grant_ids: string[]
+  demographics: Record<string, unknown>
+  created_at?: string
+  updated_at?: string
   member_count?: number
-
-  /**
-   * When requesting `/api/teams?includeMembers=true` the API will
-   * populate a `users` array containing id, name and email for each
-   * member.  This is optional and not stored in the database.
-   */
-  users?: { id: string; name: string; email: string }[]
 }
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
+/** Build a safe Postgres text[] literal: '{"a","b"}' */
+function toPgTextArrayLiteral(arr: string[]): string {
+  const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+  return `{${arr.map((v) => `"${esc(v)}"`).join(",")}}`
+}
 
-/** Generate a URL‑friendly slug / fallback id from a name string. */
-const slugify = (name: string): string =>
-  name
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, "-")        // collapse whitespace → dash
-    .replace(/[^a-z0-9_-]/g, "") // strip anything funky
-
-/* ------------------------------------------------------------------ */
-/*  Queries                                                           */
-/* ------------------------------------------------------------------ */
-
-/** List all teams for an account, with *numeric* member counts. */
+/**
+ * List all teams for an account. No joins; return exactly the DB contents.
+ */
 export async function listTeams(accountId: string): Promise<Team[]> {
-  const { rows } = await sql`
-    SELECT  t.*, COUNT(u.id)::int AS member_count
-    FROM    teams  AS t
-      LEFT  JOIN users AS u ON u.team_id = t.id
-    WHERE   t.account_id = ${accountId}
-    GROUP   BY t.id
-    ORDER   BY t.name;
+  const { rows } = await sql/* sql */`
+    SELECT
+      account_id,
+      id,
+      slug,
+      name,
+      color,
+      icon,
+      default_template,
+      COALESCE(product_grant_ids, '{}')    AS product_grant_ids,
+      COALESCE(demographics, '{}'::jsonb)  AS demographics,
+      created_at,
+      updated_at
+    FROM teams
+    WHERE account_id = ${accountId}
+    ORDER BY name;
   `
-  // Cast rows to Team[]; the `member_count` column is included via the
-  // SELECT above.  Other virtual fields are undefined.
-  return rows as Team[]
+  return rows.map((r: any) => ({
+    account_id: r.account_id,
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    color: r.color,
+    icon: r.icon,
+    default_template: r.default_template ?? null,
+    product_grant_ids: (r.product_grant_ids ?? []) as string[],
+    demographics: (r.demographics ?? {}) as Record<string, unknown>,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  }))
 }
 
-/** Insert / update (upsert) a team. Ensures slug & id are never NULL. */
-export async function saveTeam(
-  accountId: string,
-  team: Partial<Team>,
-): Promise<void> {
-  /* ---------- derive safe id & slug ---------- */
-  const safeName   = team.name ?? ""
-  const derivedSlug = slugify(team.slug ?? safeName)
-  const derivedId   = team.id ?? derivedSlug
-
-  /* ---------- build Postgres array literal safely ---------- */
-  const pgIdsLiteral =
-    team.product_grant_ids?.length
-      ? `{${team.product_grant_ids.join(",")}}`
-      : null
-
-  await sql`
-    INSERT INTO teams (
-      id, account_id, slug, name, color, icon,
-      default_template, product_grant_ids, updated_at
-    ) VALUES (
-      ${derivedId},
-      ${accountId},
-      ${derivedSlug},
-      ${team.name},
-      ${team.color ?? null},
-      ${team.icon ?? null},
-      ${team.default_template ?? null},
-      ${pgIdsLiteral}::uuid[],
-      NOW()
-    )
-    ON CONFLICT (id) DO UPDATE
-      SET slug              = EXCLUDED.slug,
-          name              = EXCLUDED.name,
-          color             = EXCLUDED.color,
-          icon              = EXCLUDED.icon,
-          default_template  = EXCLUDED.default_template,
-          product_grant_ids = EXCLUDED.product_grant_ids,
-          updated_at        = NOW();
+/** Fetch a single team by id. */
+export async function getTeam(accountId: string, id: string): Promise<Team | null> {
+  const { rows } = await sql/* sql */`
+    SELECT
+      account_id,
+      id,
+      slug,
+      name,
+      color,
+      icon,
+      default_template,
+      COALESCE(product_grant_ids, '{}')    AS product_grant_ids,
+      COALESCE(demographics, '{}'::jsonb)  AS demographics,
+      created_at,
+      updated_at
+    FROM teams
+    WHERE account_id = ${accountId} AND id = ${id}
+    LIMIT 1;
   `
-
-  /*
-   * Persist the team definition to Vercel Blob storage.  We
-   * normalise the object to camelCase to match the example in the
-   * specification. Errors are swallowed silently so a failed blob
-   * write does not block the DB update.
-   */
-  try {
-    await saveTeamBlob(accountId, {
-      id: derivedId,
-      name: team.name ?? safeName,
-      color: team.color ?? null,
-      icon: team.icon ?? null,
-      default_template: team.default_template ?? null,
-      product_grant_ids: team.product_grant_ids ?? null,
-    })
-  } catch (err) {
-    console.warn("[saveTeam] Failed to persist team to blob", err)
+  if (rows.length === 0) return null
+  const r: any = rows[0]
+  return {
+    account_id: r.account_id,
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    color: r.color,
+    icon: r.icon,
+    default_template: r.default_template ?? null,
+    product_grant_ids: (r.product_grant_ids ?? []) as string[],
+    demographics: (r.demographics ?? {}) as Record<string, unknown>,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
   }
 }
 
-/** Delete a team (hard‑delete). */
-export async function deleteTeam(
-  accountId: string,
-  teamId: string,
-): Promise<void> {
-  await sql`
-    DELETE FROM teams
-    WHERE id = ${teamId} AND account_id = ${accountId};
+/**
+ * Upsert a team.
+ * - Uses a text[] literal for product_grant_ids (compatible with older @vercel/postgres)
+ * - JSONB demographics via explicit ::jsonb cast
+ */
+export async function saveTeam(accountId: string, t: Partial<Team> & { id: string; name: string }) {
+  const id = t.id
+  const slug = t.slug ?? id
+  const name = t.name
+
+  const color = t.color ?? null
+  const icon = t.icon ?? null
+  const defaultTemplate = t.default_template ?? null
+  const grantIds = (t.product_grant_ids ?? []) as string[]
+  const demographics = t.demographics ?? {}
+
+  // Build a Postgres array literal string safely
+  const pgArrayLiteral = toPgTextArrayLiteral(grantIds)
+
+  await sql/* sql */`
+    INSERT INTO teams (
+      account_id, id, slug, name, color, icon,
+      default_template, product_grant_ids, demographics
+    )
+    VALUES (
+      ${accountId},
+      ${id},
+      ${slug},
+      ${name},
+      ${color},
+      ${icon},
+      ${defaultTemplate},
+      ${pgArrayLiteral}::text[],                 -- change to ::uuid[] if your column is uuid[]
+      ${JSON.stringify(demographics)}::jsonb
+    )
+    ON CONFLICT (account_id, id) DO UPDATE
+    SET
+      slug              = EXCLUDED.slug,
+      name              = EXCLUDED.name,
+      color             = EXCLUDED.color,
+      icon              = EXCLUDED.icon,
+      default_template  = EXCLUDED.default_template,
+      product_grant_ids = EXCLUDED.product_grant_ids,
+      demographics      = EXCLUDED.demographics,
+      updated_at        = now();
   `
 }
 
-/** Load a single team by id, with numeric member_count. */
-export async function loadTeam(
-  accountId: string,
-  teamId: string,
-): Promise<Team | null> {
-  const { rows } = await sql`
-    SELECT  t.*, COUNT(u.id)::int AS member_count
-    FROM    teams  AS t
-      LEFT  JOIN users AS u ON u.team_id = t.id
-    WHERE   t.account_id = ${accountId}
-      AND   t.id         = ${teamId}
-    GROUP   BY t.id;
+/** Delete a team by id. */
+export async function deleteTeam(accountId: string, id: string) {
+  await sql/* sql */`
+    DELETE FROM teams
+    WHERE account_id = ${accountId} AND id = ${id};
   `
-  return (rows[0] as Team | undefined) ?? null
 }

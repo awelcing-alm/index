@@ -1,6 +1,7 @@
 // app/api/bulk-users/route.ts – trusts `accountId` supplied in the POST body
 // (the page server‑side injects the currently‑selected account, so this value is
 // authoritative). If the client omits or tampers with it, we hard‑fail with 400.
+export const runtime = "nodejs"
 
 import { NextRequest, NextResponse } from "next/server"
 import pLimit from "p-limit"

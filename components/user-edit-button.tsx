@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { UserEditModal } from "./user-edit-modal"
 import { getUserDetailsAction } from "@/lib/user-actions"
-import type { ZephrUser } from "@/lib/user-api"
+import type { ZephrUser } from "@/lib/zephr-types"
 
 interface UserEditButtonProps {
   userId: string
@@ -79,24 +79,27 @@ export function UserEditButton({ userId, userEmail, existingAttributes, onUserUp
     }
   }
 
-  return (
-    <>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="text-gray-400 hover:text-white hover:bg-white/10"
-        onClick={handleOpenModal}
-      >
-        Edit
-      </Button>
-      <UserEditModal
-        userDetails={userDetails}
-        loading={loading}
-        error={error}
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        onUserUpdated={handleUserUpdated}
-      />
-    </>
-  )
+return (
+  <>
+    <Button
+      variant="ghost"
+      size="sm"
+      className="rounded-none text-ink hover:bg-[hsl(var(--muted))] hover:text-ink"
+      onClick={handleOpenModal}
+      aria-label="Edit user"
+    >
+      Edit
+    </Button>
+
+    <UserEditModal
+      userDetails={userDetails}
+      loading={loading}
+      error={error}
+      isOpen={isModalOpen}
+      onClose={handleCloseModal}
+      onUserUpdated={handleUserUpdated}
+    />
+  </>
+);
 }
+

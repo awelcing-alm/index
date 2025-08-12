@@ -4,23 +4,45 @@ import { redirect } from "next/navigation"
 
 export default async function LoginPage() {
   const user = await getCurrentUser()
-
-  if (user) {
-    redirect("/")
-  }
+  if (user) redirect("/")
 
   return (
-    <div className="min-h-screen bg-[#0B0B1A] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-blue-900/20 to-pink-900/20" />
-      <div className="relative z-10 w-full max-w-md">
-        <div className="bg-black/40 backdrop-blur-lg border border-white/10 rounded-2xl p-8 shadow-2xl">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">Zephr Admin</h1>
-            <p className="text-gray-400">Sign in to manage your accounts</p>
+    <div className="min-h-screen bg-paper">
+      {/* subtle grid backdrop */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[0.06]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+          color: "hsl(var(--line))",
+        }}
+      />
+
+      <main className="relative z-10 mx-auto flex min-h-screen max-w-7xl items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <div className="rounded-none border border-line bg-paper p-8 shadow-sm">
+            <div className="mb-6 text-center">
+              <div className="mx-auto mb-4 grid size-12 place-items-center rounded-none border border-line bg-[hsl(var(--muted))] text-ink">
+                <span className="font-serif text-lg">Z</span>
+              </div>
+              <h1 className="font-serif text-2xl text-ink">Index</h1>
+              <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
+                Admin Portal
+              </p>
+            </div>
+
+            <LoginForm />
+
           </div>
-          <LoginForm />
+
+          <div className="mt-6 text-center text-xs text-[hsl(var(--muted-foreground))]">
+            <span className="align-middle text-[10px] uppercase tracking-wider">v</span>
+            <span className="ml-1 align-middle">Admin Console</span>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }

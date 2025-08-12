@@ -1,36 +1,7 @@
-import { adminApiCall } from "./api-client"
-
-export interface ZephrAccountGrant {
-  grant_id: string // API uses grant_id, not grantId
-  user_id: string
-  account_id: string
-  expiry_state: string
-  entitlement_type: string
-  entitlement_id: string
-  start_time: string // API uses start_time, not startTime
-  end_time: string // API uses end_time, not endTime
-  product_id: string
-  created_at: string // API uses created_at, not createdAt
-}
-
-export interface ZephrProduct {
-  tenantId: string
-  subTenantId?: string
-  id: string
-  label: string
-  description?: string
-  entitlement?: {
-    id: string
-    type: string
-    entitlementTenant: string
-  }
-  mapping?: Record<string, any>
-  sharingLimit?: number
-  grantId: string
-  startTime: string
-  endTime: string
-  expiry_state: string
-}
+// lib/product-api.ts
+import 'server-only'
+import { adminApiCall } from "@/lib/zephr-api"
+import type { ZephrAccountGrant, ZephrProduct } from "@/lib/zephr-types"
 
 export async function getProductsByAccount(accountId: string): Promise<ZephrProduct[]> {
   console.log(`[getProductsByAccount] Fetching grants for account: ${accountId}`)

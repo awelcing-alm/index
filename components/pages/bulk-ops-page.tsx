@@ -1,3 +1,4 @@
+// components/pages/bulk-ops-page.tsx
 "use client"
 
 import { useState } from "react"
@@ -8,22 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import {
-  Layers,
-  Upload,
-  Users,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Info,
-} from "lucide-react"
+import { Layers, Upload, Users, CheckCircle, XCircle, AlertTriangle, Info } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
-import type { ZephrAccount } from "@/lib/zephr-api"
-
-/**
- * BulkOpsPage – create many users then attach each to the selected account.
- * Pass the currently active account as a prop – see AccountSwitcher.
- */
+import type { ZephrAccount } from "@/lib/zephr-types"
 
 interface BulkUserResult {
   email: string
@@ -45,20 +33,19 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
   const [progress, setProgress] = useState(0)
   const [verifyFlag, setVerifyFlag] = useState(false)
 
-  /* ------------------------------ helpers ------------------------------ */
   const parseEmails = (input: string): string[] => {
-    return [...new Set(
-      input
-        .split(/[;,\n\r\t]/)
-        .map((e) => e.trim())
-        .filter((e) => e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)),
-    )]
+    return [
+      ...new Set(
+        input
+          .split(/[;,\n\r\t]/)
+          .map((e) => e.trim())
+          .filter((e) => e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)),
+      ),
+    ]
   }
 
-  /* --------------------------- main action --------------------------- */
   const handleBulkAdd = async () => {
     const emails = parseEmails(csvInput)
-
     if (!accountId) {
       alert("No account selected – please choose an account first.")
       return
@@ -95,51 +82,44 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
     }
   }
 
-  /* ----------------------------- derived ----------------------------- */
   const previewEmails = parseEmails(csvInput)
   const successCount = results.filter((r) => r.status === "success").length
   const errorCount = results.filter((r) => r.status === "error").length
   const skippedCount = results.filter((r) => r.status === "skipped").length
 
-  /* ------------------------------ render ------------------------------ */
   return (
     <div className="space-y-6">
       {/* ============================ INPUT CARD ============================ */}
-      <Card className="bg-black/20 backdrop-blur-lg border-white/10 shadow-[0_0_15px_rgba(128,0,128,0.5)]">
+      <Card className="rounded-none border border-line bg-paper">
         <CardHeader>
-          <CardTitle className="text-2xl text-white flex items-center gap-2">
-            <Layers className="h-6 w-6" />
+          <CardTitle className="flex items-center gap-2 font-serif text-2xl text-ink">
+            <Layers className="h-6 w-6" aria-hidden="true" />
             Bulk Operations
           </CardTitle>
-          <p className="text-gray-400">
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
             Perform bulk operations on users for the active account.
           </p>
           {activeAccount && (
-            <p className="text-sm text-purple-300 mt-2">
-              Target account: {activeAccount.name}
-            </p>
+            <p className="mt-2 text-xs text-ink/70">Target account: {activeAccount.name}</p>
           )}
         </CardHeader>
         <CardContent>
           <div className="space-y-6">
-            {/* ---------------- info alert ---------------- */}
-            <Alert className="border-blue-500/50 bg-blue-500/10">
-              <Info className="h-4 w-4" />
-              <AlertDescription className="text-blue-400">
-                <p className="font-semibold">Bulk Add Users</p>
-                <p className="text-sm mt-1">
-                  Paste a list of email addresses (comma, semicolon, or newline
-                  separated) to create Zephr users and add them to <strong>the
-                  currently selected account</strong>.
+            {/* info alert */}
+            <Alert className="rounded-none border border-line bg-[hsl(var(--secondary))]/20">
+              <Info className="h-4 w-4 text-ink" aria-hidden="true" />
+              <AlertDescription className="text-ink">
+                <p className="font-medium">Bulk Add Users</p>
+                <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
+                  Paste a list of email addresses (comma, semicolon, or newline separated) to create Zephr
+                  users and add them to <strong>the currently selected account</strong>.
                 </p>
               </AlertDescription>
             </Alert>
 
-            {/* ---------------- text area ---------------- */}
+            {/* textarea */}
             <div>
-              <Label htmlFor="csvInput" className="text-white">
-                Email Addresses
-              </Label>
+              <Label htmlFor="csvInput" className="text-ink">Email Addresses</Label>
               <Textarea
                 id="csvInput"
                 value={csvInput}
@@ -150,46 +130,38 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
                   "jane.smith@company.com\n" +
                   "admin@organization.org"
                 }
-                className="bg-white/5 border-white/20 text-white placeholder:text-gray-400 min-h-[120px]"
+                className="min-h-[120px] rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))] focus-visible:ring-0 focus:border-ink"
                 disabled={isProcessing}
               />
             </div>
 
-            {/* ---------------- email verified toggle ---------------- */}
-            <div className="flex items-center space-x-2">
+            {/* email verified toggle */}
+            <div className="flex items-center gap-2">
               <Checkbox
                 id="emailVerified"
                 checked={verifyFlag}
                 onCheckedChange={(checked) => setVerifyFlag(checked === true)}
                 disabled={isProcessing}
+                className="rounded-none"
               />
-              <Label htmlFor="emailVerified" className="text-white">
-                Mark emails as verified
-              </Label>
+              <Label htmlFor="emailVerified" className="text-ink">Mark emails as verified</Label>
             </div>
 
-            {/* ---------------- preview chips ---------------- */}
+            {/* preview chips */}
             {previewEmails.length > 0 && (
               <div>
-                <Label className="text-white">
+                <Label className="text-ink">
                   Preview ({previewEmails.length} emails detected)
                 </Label>
-                <div className="mt-2 p-3 bg-white/5 border border-white/10 rounded-md max-h-32 overflow-y-auto">
+                <div className="mt-2 max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-3">
                   <div className="flex flex-wrap gap-1">
                     {previewEmails.slice(0, 20).map((email) => (
-                      <Badge
-                        key={email}
-                        variant="outline"
-                        className="border-purple-500/50 text-purple-300 text-xs"
-                      >
+                      <Badge key={email} variant="outline" className="rounded-none border-line text-ink text-xs">
                         {email}
                       </Badge>
                     ))}
                     {previewEmails.length > 20 && (
-                      <Badge
-                        variant="outline"
-                        className="border-gray-500/50 text-gray-400 text-xs"
-                      >
+                      <Badge variant="outline" className="rounded-none border-line text-[hsl(var(--muted-foreground))] text-xs">
                         +{previewEmails.length - 20} more
                       </Badge>
                     )}
@@ -198,35 +170,34 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
               </div>
             )}
 
-            {/* ---------------- progress bar ---------------- */}
+            {/* progress */}
             {isProcessing && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-white">Processing…</Label>
-                  <span className="text-sm text-gray-400">
+                  <Label className="text-ink">Processing…</Label>
+                  <span className="text-sm text-[hsl(var(--muted-foreground))]">
                     {Math.round(progress)}%
                   </span>
                 </div>
-                <Progress value={progress} className="w-full" />
+                <Progress value={progress} className="w-full rounded-none" />
               </div>
             )}
 
-            {/* ---------------- action buttons ---------------- */}
+            {/* actions */}
             <div className="flex gap-3">
               <Button
                 onClick={handleBulkAdd}
-                disabled={
-                  previewEmails.length === 0 || isProcessing || !accountId
-                }
-                className="bg-purple-600 hover:bg-purple-700 text-white"
+                disabled={previewEmails.length === 0 || isProcessing || !accountId}
+                className="rounded-none bg-ink text-paper hover:bg-ink/90 disabled:opacity-60"
               >
                 <Upload className="mr-2 h-4 w-4" />
                 {isProcessing ? "Processing…" : `Add ${previewEmails.length} Users`}
               </Button>
+
               {!isProcessing && (
                 <Button
                   variant="outline"
-                  className="border-white/20 text-white"
+                  className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
                   onClick={() => {
                     setCsvInput("")
                     setResults([])
@@ -244,44 +215,48 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
 
       {/* ============================ RESULTS CARD ============================ */}
       {results.length > 0 && (
-        <Card className="bg-black/20 backdrop-blur-lg border-white/10">
+        <Card className="rounded-none border border-line bg-paper">
           <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Users className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 text-ink">
+              <Users className="h-5 w-5" aria-hidden="true" />
               Bulk Operation Results
             </CardTitle>
-            <div className="flex gap-3 mt-2">
-              <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
+            <div className="mt-2 flex gap-3">
+              <Badge className="rounded-none border border-line bg-[hsl(var(--muted))] text-ink">
                 {successCount} successful
               </Badge>
-              <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+              <Badge className="rounded-none border border-line bg-[hsl(var(--muted))] text-ink">
                 {skippedCount} skipped
               </Badge>
-              <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+              <Badge className="rounded-none border border-line bg-[hsl(var(--muted))] text-ink">
                 {errorCount} errors
               </Badge>
             </div>
           </CardHeader>
+
           <CardContent>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
+            <div className="max-h-64 space-y-2 overflow-y-auto">
               {results.map((result, index) => (
                 <div
                   key={index}
-                  className={`flex items-center gap-3 p-2 rounded ${
+                  className={[
+                    "flex items-center gap-3 rounded-none border p-2",
                     result.status === "success"
-                      ? "bg-green-500/10 border border-green-500/20"
+                      ? "border-line bg-[hsl(var(--secondary))]/15"
                       : result.status === "skipped"
-                      ? "bg-yellow-500/10 border border-yellow-500/20"
-                      : "bg-red-500/10 border border-red-500/20"
-                  }`}
+                      ? "border-line bg-[hsl(var(--muted))]"
+                      : "border-line bg-[hsl(var(--destructive))]/10",
+                  ].join(" ")}
                 >
-                  {result.status === "success" && <CheckCircle className="h-4 w-4 text-green-400" />}
-                  {result.status === "skipped" && <AlertTriangle className="h-4 w-4 text-yellow-400" />}
-                  {result.status === "error" && <XCircle className="h-4 w-4 text-red-400" />}
+                  {result.status === "success" && <CheckCircle className="h-4 w-4 text-ink" />}
+                  {result.status === "skipped" && <AlertTriangle className="h-4 w-4 text-ink" />}
+                  {result.status === "error" && <XCircle className="h-4 w-4 text-[hsl(var(--destructive))]" />}
                   <div className="flex-1">
-                    <p className="text-white text-sm font-medium">{result.email}</p>
-                    <p className="text-gray-400 text-xs">{result.message}</p>
-                    {result.userId && <p className="text-gray-500 text-xs">User ID: {result.userId}</p>}
+                    <p className="text-sm font-medium text-ink">{result.email}</p>
+                    <p className="text-xs text-[hsl(var(--muted-foreground))]">{result.message}</p>
+                    {result.userId && (
+                      <p className="text-xs text-[hsl(var(--muted-foreground))]">User ID: {result.userId}</p>
+                    )}
                   </div>
                 </div>
               ))}

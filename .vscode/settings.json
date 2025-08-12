@@ -1,0 +1,21 @@
+{
+  // Keep CSS validation but ignore Tailwind/PostCSS at-rules:
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore",
+  "less.lint.unknownAtRules": "ignore",
+
+  // Make IntelliSense treat your CSS as Tailwind:
+  "files.associations": {
+    "app/globals.css": "tailwindcss",
+    "**/globals.css": "tailwindcss"
+  },
+
+  // Help the Tailwind extension find your config (TS is OK):
+  "tailwindCSS.experimental.configFile": "tailwind.config.ts",
+
+  // Optional: better class detection inside JS/TS/TSX
+  "tailwindCSS.includeLanguages": {
+    "postcss": "css",
+    "plaintext": "html"
+  }
+}

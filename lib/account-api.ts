@@ -1,66 +1,71 @@
-import { adminApiCall } from "./api-client"
+// lib/account-api.ts
+import type { ZephrAccount, ZephrAccountsResponse } from "@/lib/zephr-types"
 
-export interface ZephrAccount {
-  account_id: string
-  name: string
-  email_address: string
-  number_of_seats: number
-  tenant_id: string
-  created_date?: string
-  modified_date?: string
-}
+const DEFAULT_RPP = 50
+const MAX_PAGES = Number(process.env.ACCOUNTS_MAX_PAGES ?? "8")         // hard cap
+const ZERO_HIT_BREAK_AFTER = Number(process.env.ACCOUNTS_ZERO_PAGE_STOP ?? "2") // early-stop if N empty pages in a row
 
-export interface ZephrAccountsResponse {
-  results: ZephrAccount[]
-  total: number
-}
-
-// ---------------------------------------------------------------------------
-// 🔐 Active‑account tracking
-// ---------------------------------------------------------------------------
-// The page that handles account switching should call `setActiveAccount()` once
-// it has resolved the ZephrAccount object (e.g., after `switchAccount()` and
-// server refresh). Any downstream code – including the /api/bulk‑users route –
-// can then call `getActiveAccount()` or `getActiveAccountId()` to obtain the
-// single, authoritative account context.
-// ---------------------------------------------------------------------------
-
+// ------- Active account store (client-safe) -------
 let _activeAccount: ZephrAccount | undefined
 
 export function setActiveAccount(account: ZephrAccount | undefined) {
   _activeAccount = account
 }
-
 export function getActiveAccount(): ZephrAccount | undefined {
   return _activeAccount
 }
-
 export function getActiveAccountId(): string | undefined {
   return _activeAccount?.account_id
 }
 
-// ---------------------------------------------------------------------------
-// 📥  Utility to fetch *only* the accounts owned by a given email address.
-// ---------------------------------------------------------------------------
+// ------- Server-only helper (lazy import adminApiCall) -------
 export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccount[]> {
-  let page = 1
-  const rpp = 50
-  let hasMorePages = true
-  const userAccounts: ZephrAccount[] = []
+  const { adminApiCall } = await import("./api-client")
 
-  while (hasMorePages) {
-    const accountsResponse: ZephrAccountsResponse = await adminApiCall(`/v3/accounts?page=${page}&rpp=${rpp}`)
+  const rpp = DEFAULT_RPP
+  const owned: ZephrAccount[] = []
 
-    const ownedAccounts = accountsResponse.results.filter((account) =>
-      account.email_address?.toLowerCase() === ownerEmail.toLowerCase(),
-    )
+  // 1) Try a targeted request first (if backend supports filtering on email_address)
+  try {
+    const targeted = (await adminApiCall(
+      `/v3/accounts?email_address=${encodeURIComponent(ownerEmail)}&page=1&rpp=${rpp}`
+    )) as Partial<ZephrAccountsResponse> | any
 
-    userAccounts.push(...ownedAccounts)
-
-    const totalPages = Math.ceil(accountsResponse.total / rpp)
-    hasMorePages = page < totalPages
-    page++
+    const results = Array.isArray(targeted?.results) ? targeted.results : Array.isArray(targeted) ? targeted : []
+    if (results.length > 0) {
+      return results.filter((a: ZephrAccount) => a.email_address?.toLowerCase() === ownerEmail.toLowerCase())
+    }
+  } catch {
+    // ignore and fall back to paged scan
   }
 
-  return userAccounts
+  // 2) Fallback: paged scan but with caps + early stop
+  let page = 1
+  let zeroHitStreak = 0
+
+  // fetch first page to know total (but don't trust it blindly)
+  const first = (await adminApiCall(`/v3/accounts?page=${page}&rpp=${rpp}`)) as ZephrAccountsResponse
+  const totalPages = Math.max(1, Math.ceil((first.total ?? rpp) / rpp))
+  const limit = Math.min(totalPages, MAX_PAGES)
+
+  const collect = (resp: ZephrAccountsResponse) => {
+    const pageOwned = resp.results.filter(
+      (a) => a.email_address?.toLowerCase() === ownerEmail.toLowerCase()
+    )
+    if (pageOwned.length === 0) zeroHitStreak += 1
+    else zeroHitStreak = 0
+    owned.push(...pageOwned)
+  }
+
+  collect(first)
+
+  while (page < limit) {
+    if (zeroHitStreak >= ZERO_HIT_BREAK_AFTER) break
+    page += 1
+
+    const resp = (await adminApiCall(`/v3/accounts?page=${page}&rpp=${rpp}`)) as ZephrAccountsResponse
+    collect(resp)
+  }
+
+  return owned
 }

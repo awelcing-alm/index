@@ -1,27 +1,8 @@
+// lib/user-api.ts
+
+import 'server-only'
 import { adminApiCall } from "./api-client"
-
-export interface ZephrUser {
-  user_id: string
-  identifiers: {
-    email_address: string
-  }
-  attributes: Record<string, any>
-  email_verified: boolean
-  created_date?: string
-  modified_date?: string
-  account_id?: string
-  user_type?: string
-}
-
-export interface ZephrAccountUser {
-  user_id: string
-  account_id: string
-  tenantId: string
-  subTenantId: string
-  user_email: string
-  user_type: string
-  attributes?: Record<string, any>
-}
+import type { ZephrUser, ZephrAccountUser } from "@/lib/zephr-types"
 
 export async function getUserDetails(userId: string): Promise<ZephrUser> {
   console.log(`[getUserDetails] === FETCHING USER DETAILS FOR: ${userId} ===`)

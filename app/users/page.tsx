@@ -1,5 +1,5 @@
 // app/teams/page.tsx
-import TeamManagerPage from "@/components/pages/team-manager-page"
+import UsersPage from "@/components/pages/users-page"
 import { MainLayout } from "@/components/main-layout"
 
 
@@ -11,7 +11,7 @@ export default function TeamsPage() {
   // Server component wrapper ensures this page inherits app/layout.tsx
   return (
     <MainLayout>
-      <TeamManagerPage />
+      <UsersPage />
     </MainLayout>
   )
 }

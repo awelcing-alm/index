@@ -1,11 +1,13 @@
 // lib/teams.ts
 import { sql } from "@/lib/db"
+
 /**
  * Public Team shape used across the app.
- * Keep member_count DERIVED ONLY (never stored in DB).
+ * - account_id is the internal DB account id (INTEGER)
+ * - member_count is DERIVED ONLY (never stored in DB)
  */
 export interface Team {
-  account_id: string
+  account_id: number
   id: string
   slug: string
   name: string
@@ -26,9 +28,10 @@ function toPgTextArrayLiteral(arr: string[]): string {
 }
 
 /**
- * List all teams for an account. No joins; return exactly the DB contents.
+ * List all teams for an *internal* account id (INTEGER).
+ * No joins; returns exactly the DB contents.
  */
-export async function listTeams(accountId: string): Promise<Team[]> {
+export async function listTeams(accountId: number): Promise<Team[]> {
   const { rows } = await sql/* sql */`
     SELECT
       account_id,
@@ -43,26 +46,26 @@ export async function listTeams(accountId: string): Promise<Team[]> {
       created_at,
       updated_at
     FROM teams
-    WHERE account_id = ${accountId}
+    WHERE account_id = ${accountId}::int
     ORDER BY name;
   `
   return rows.map((r: any) => ({
-    account_id: r.account_id,
-    id: r.id,
-    slug: r.slug,
-    name: r.name,
-    color: r.color,
-    icon: r.icon,
+    account_id: Number(r.account_id),
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    color: r.color ?? null,
+    icon: r.icon ?? null,
     default_template: r.default_template ?? null,
     product_grant_ids: (r.product_grant_ids ?? []) as string[],
     demographics: (r.demographics ?? {}) as Record<string, unknown>,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    created_at: r.created_at as string | undefined,
+    updated_at: r.updated_at as string | undefined,
   }))
 }
 
-/** Fetch a single team by id. */
-export async function getTeam(accountId: string, id: string): Promise<Team | null> {
+/** Fetch a single team by UUID id for an *internal* account id (INTEGER). */
+export async function getTeam(accountId: number, id: string): Promise<Team | null> {
   const { rows } = await sql/* sql */`
     SELECT
       account_id,
@@ -77,34 +80,45 @@ export async function getTeam(accountId: string, id: string): Promise<Team | nul
       created_at,
       updated_at
     FROM teams
-    WHERE account_id = ${accountId} AND id = ${id}
+    WHERE account_id = ${accountId}::int AND id = ${id}
     LIMIT 1;
   `
   if (rows.length === 0) return null
   const r: any = rows[0]
   return {
-    account_id: r.account_id,
-    id: r.id,
-    slug: r.slug,
-    name: r.name,
-    color: r.color,
-    icon: r.icon,
+    account_id: Number(r.account_id),
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    color: r.color ?? null,
+    icon: r.icon ?? null,
     default_template: r.default_template ?? null,
     product_grant_ids: (r.product_grant_ids ?? []) as string[],
     demographics: (r.demographics ?? {}) as Record<string, unknown>,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    created_at: r.created_at as string | undefined,
+    updated_at: r.updated_at as string | undefined,
   }
 }
 
 /**
- * Upsert a team.
- * - Uses a text[] literal for product_grant_ids (compatible with older @vercel/postgres)
- * - JSONB demographics via explicit ::jsonb cast
+ * Upsert a team using (account_id, slug) as the natural key.
+ * - INSERT does not provide `id` (DB generates UUID).
+ * - product_grant_ids stored as TEXT[] (no uuid[] cast).
+ * - demographics stored as JSONB.
  */
-export async function saveTeam(accountId: string, t: Partial<Team> & { id: string; name: string }) {
-  const id = t.id
-  const slug = t.slug ?? id
+export async function saveTeam(
+  accountId: number,
+  t: {
+    slug: string
+    name: string
+    color?: string | null
+    icon?: string | null
+    default_template?: string | null
+    product_grant_ids?: string[]
+    demographics?: Record<string, unknown>
+  }
+) {
+  const slug = t.slug
   const name = t.name
 
   const color = t.color ?? null
@@ -113,28 +127,25 @@ export async function saveTeam(accountId: string, t: Partial<Team> & { id: strin
   const grantIds = (t.product_grant_ids ?? []) as string[]
   const demographics = t.demographics ?? {}
 
-  // Build a Postgres array literal string safely
   const pgArrayLiteral = toPgTextArrayLiteral(grantIds)
 
   await sql/* sql */`
     INSERT INTO teams (
-      account_id, id, slug, name, color, icon,
+      account_id, slug, name, color, icon,
       default_template, product_grant_ids, demographics
     )
     VALUES (
-      ${accountId},
-      ${id},
+      ${accountId}::int,
       ${slug},
       ${name},
       ${color},
       ${icon},
       ${defaultTemplate},
-      ${pgArrayLiteral}::text[],                 -- change to ::uuid[] if your column is uuid[]
+      ${pgArrayLiteral}::text[],
       ${JSON.stringify(demographics)}::jsonb
     )
-    ON CONFLICT (account_id, id) DO UPDATE
+    ON CONFLICT (account_id, slug) DO UPDATE
     SET
-      slug              = EXCLUDED.slug,
       name              = EXCLUDED.name,
       color             = EXCLUDED.color,
       icon              = EXCLUDED.icon,
@@ -145,10 +156,10 @@ export async function saveTeam(accountId: string, t: Partial<Team> & { id: strin
   `
 }
 
-/** Delete a team by id. */
-export async function deleteTeam(accountId: string, id: string) {
+/** Delete a team by UUID id for an *internal* account id (INTEGER). */
+export async function deleteTeam(accountId: number, id: string) {
   await sql/* sql */`
     DELETE FROM teams
-    WHERE account_id = ${accountId} AND id = ${id};
+    WHERE account_id = ${accountId}::int AND id = ${id};
   `
 }

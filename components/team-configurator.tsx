@@ -156,7 +156,7 @@ export default function TeamConfigurator({ onCreated, initial }: Props) {
             Array.isArray(f.values) ? f.values :
             []
           return raw
-            .map((o: any) => (typeof o === "string" ? o : (o?.value ?? o?.label ?? "") + ""))
+            .map((o: any) => (typeof o === "string" ? o : (o?.value ?? o?.label ?? "") + "")) // value preferred, fallback to label
             .filter(Boolean)
         }
 
@@ -196,22 +196,19 @@ export default function TeamConfigurator({ onCreated, initial }: Props) {
       return
     }
 
-    // If editing, keep the existing id; otherwise slugify the new name
-    const idToUse = initial?.id ?? slugify(name)
-    const slug = idToUse
+    // For create + edit we upsert using (account_id, slug)
+    const slug = initial?.id ? (initial?.demographics?.["slug"] as string) || slugify(name) : slugify(name)
 
     const payload = {
-      id: idToUse,
+      // NOTE: we do NOT send `id` on create; DB will generate UUID
       slug,
       name: name.trim(),
       color: color || null,
       icon: icon || null,
-      // store under the same field name your backend expects
       default_template: newsletterTemplate || null,
-      // IMPORTANT: we persist *grant IDs* here
-      product_grant_ids: selectedGrantIds,
+      product_grant_ids: selectedGrantIds, // strings -> stored as TEXT[]
       demographics: {
-        ...(region ? { region } : {}), // maps to Zephr "country"
+        ...(region ? { region } : {}),
         ...(jobFunction ? { job_function: jobFunction } : {}),
         ...(jobArea ? { job_area: jobArea } : {}),
       },
@@ -220,7 +217,7 @@ export default function TeamConfigurator({ onCreated, initial }: Props) {
     try {
       setLoading(true)
       const res = await fetch("/api/teams", {
-        method: "POST", // upsert on the API
+        method: "POST", // upsert on the API (server resolves internal account_id)
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })

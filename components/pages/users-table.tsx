@@ -41,6 +41,8 @@ import {
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
+import { UserEditButton } from "@/components/user-edit-button"
+
 
 /* ---------- util ---------- */
 const fetchTemplateNames = async () =>

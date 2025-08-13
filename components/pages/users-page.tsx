@@ -1,6 +1,5 @@
 // components/pages/users-page.tsx
 import { Suspense } from "react"
-import { cookies } from "next/headers"
 
 /* ---------- server helpers ---------- */
 import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
@@ -31,19 +30,14 @@ export async function UsersPage() {
     )
   }
 
-  const cookieStore = await cookies()
-  const accountId =
-    (acct as any).account_id ??
-    (acct as any).id ??
-    cookieStore.get("active_account_id")?.value ??
-    ""
+  const accountId = acct.account_id
 
   const [usersRes, groupsRes] = await Promise.allSettled([
     getUsersForCurrentAccount(),
-    listGroups(accountId as string),
+    listGroups(accountId),
   ])
 
-  const users = usersRes.status === "fulfilled" ? usersRes.value : ([] as any[])
+  const users  = usersRes.status  === "fulfilled" ? usersRes.value  : ([] as any[])
   const groups = groupsRes.status === "fulfilled" ? groupsRes.value : ([] as any[])
   const loadError =
     usersRes.status === "rejected"
@@ -68,11 +62,7 @@ export async function UsersPage() {
             </AlertDescription>
           </Alert>
         ) : (
-          <Suspense
-            fallback={
-              <p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>
-            }
-          >
+          <Suspense fallback={<p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>}>
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}

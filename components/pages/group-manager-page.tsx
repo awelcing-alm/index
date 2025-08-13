@@ -1,8 +1,7 @@
-// components/pages/group-manager-page.tsx
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useEffect, useMemo, useState, useCallback } from "react"
+import { getActiveAccountId } from "@/lib/account-store"
 
 type Group = {
   account_id: string
@@ -36,13 +35,14 @@ function slugify(s: string) {
 }
 
 export default function GroupManagerPage() {
-  // list state
+  const accountId = getActiveAccountId()
+
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [needsAccount, setNeedsAccount] = useState(false)
 
-  // form state
+  // form
   const [name, setName] = useState("")
   const [color, setColor] = useState("#0F172A")
   const [icon, setIcon] = useState<string>("scale")
@@ -55,25 +55,30 @@ export default function GroupManagerPage() {
   const [countryOpts, setCountryOpts] = useState<string[]>([])
   const [jobFunctionOpts, setJobFunctionOpts] = useState<string[]>([])
   const [jobAreaOpts, setJobAreaOpts] = useState<string[]>([])
-
-  const [region, setRegion] = useState("")
+  const [country, setCountry] = useState("")
   const [jobFunction, setJobFunction] = useState("")
   const [jobArea, setJobArea] = useState("")
 
-  // ---- LOADERS -----------------------------------------------------
+  useMemo(() => new Set(selectedGrantIds), [selectedGrantIds]) // keeps react quiet
 
   const fetchGroups = useCallback(async () => {
     setLoading(true)
     setError(null)
     setNeedsAccount(false)
+
     try {
-      const res = await fetch("/api/groups", { cache: "no-store" })
-      if (res.status === 400) { // API returns 400 when no active account cookie
+      const res = await fetch("/api/groups", {
+        cache: "no-store",
+        headers: accountId ? { "x-account-id": accountId } : undefined,
+      })
+
+      if (res.status === 400) {
         setNeedsAccount(true)
         setGroups([])
         return
       }
       if (!res.ok) throw new Error(await res.text())
+
       const data: Group[] = await res.json()
       setGroups(data)
     } catch (err: any) {
@@ -81,11 +86,11 @@ export default function GroupManagerPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [accountId])
 
   useEffect(() => { fetchGroups() }, [fetchGroups])
 
-  // products (via your existing API)
+  // products
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -94,13 +99,11 @@ export default function GroupManagerPage() {
         if (!res.ok) throw new Error(`GET /api/products ${res.status}`)
         const raw = await res.json()
         const arr: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : []
-        const opts: ProductOption[] = arr
-          .map((p: any) => ({
-            id: String(p.id ?? p.productId ?? p.product_id ?? p.entitlement?.id ?? ""),
-            label: String(p.label ?? p.name ?? p.title ?? p.productLabel ?? p.entitlement?.type ?? "Product"),
-            grantId: p.grantId ?? p.grant_id ?? p.entitlement?.grantId ?? undefined,
-          }))
-          .filter(o => !!o.id)
+        const opts: ProductOption[] = arr.map((p: any) => ({
+          id: String(p.id ?? p.productId ?? p.product_id ?? p.entitlement?.id ?? ""),
+          label: String(p.label ?? p.name ?? p.title ?? p.productLabel ?? p.entitlement?.type ?? "Product"),
+          grantId: p.grantId ?? p.grant_id ?? p.entitlement?.grantId ?? undefined,
+        })).filter(o => !!o.id)
         if (alive) setProducts(opts)
       } catch {
         if (alive) setProducts([])
@@ -109,7 +112,7 @@ export default function GroupManagerPage() {
     return () => { alive = false }
   }, [])
 
-  // templates
+  // template names
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -147,7 +150,11 @@ export default function GroupManagerPage() {
             Array.isArray(f.options) ? f.options :
             Array.isArray(f.values) ? f.values : []
           return raw
-            .map((o: unknown) => typeof o === "string" ? o : String((o as any)?.value ?? (o as any)?.label ?? ""))
+            .map((o: unknown) => {
+              if (typeof o === "string") return o
+              const v = (o as any)?.value ?? (o as any)?.label ?? ""
+              return String(v || "")
+            })
             .filter(Boolean)
         }
 
@@ -156,20 +163,18 @@ export default function GroupManagerPage() {
         const jobFns = optionsFor("job-function")
         const jobAreas = optionsFor("job-area")
 
-        setCountryOpts(countries.length ? countries : ["United States", "Canada", "United Kingdom"])
+        setCountryOpts(countries.length ? countries : ["US", "UK", "CA"])
         setJobFunctionOpts(jobFns.length ? jobFns : ["General Counsel", "Associate", "CEO", "Student"])
-        setJobAreaOpts(jobAreas.length ? jobAreas : ["In-House Counsel", "Technology Executive", "Corporate Executive", "Law Firm", "Solo Practitioner"])
+        setJobAreaOpts(jobAreas.length ? jobAreas : ["In-House Counsel", "Technology Executive", "Corporate Executive", "Law Firm"])
       } catch {
         if (!alive) return
-        setCountryOpts(["United States", "Canada", "United Kingdom"])
+        setCountryOpts(["US", "UK", "CA"])
         setJobFunctionOpts(["General Counsel", "Associate", "CEO", "Student"])
-        setJobAreaOpts(["In-House Counsel", "Technology Executive", "Corporate Executive", "Law Firm", "Solo Practitioner"])
+        setJobAreaOpts(["In-House Counsel", "Technology Executive", "Corporate Executive", "Law Firm"])
       }
     })()
     return () => { alive = false }
   }, [])
-
-  // ---- HANDLERS ----------------------------------------------------
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -180,6 +185,7 @@ export default function GroupManagerPage() {
       return
     }
 
+    // IMPORTANT: use Zephr slugs
     const payload = {
       name: name.trim(),
       slug: slugify(name),
@@ -188,51 +194,37 @@ export default function GroupManagerPage() {
       default_template: newsletterTemplate || null,
       product_grant_ids: selectedGrantIds,
       demographics: {
-        ...(region ? { region } : {}),
-        ...(jobFunction ? { job_function: jobFunction } : {}),
-        ...(jobArea ? { job_area: jobArea } : {}),
+        ...(country     ? { "country": country } : {}),
+        ...(jobFunction ? { "job-function": jobFunction } : {}),
+        ...(jobArea     ? { "job-area": jobArea } : {}),
       },
     }
 
-    try {
-      const res = await fetch("/api/groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
+    const res = await fetch("/api/groups", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(accountId ? { "x-account-id": accountId } : {}),
+      },
+      body: JSON.stringify(payload),
+    })
 
-      if (res.status === 400) {
-        setNeedsAccount(true)
-        return
-      }
-      if (!res.ok) throw new Error(await res.text())
+    if (res.status === 400) { setNeedsAccount(true); return }
+    if (!res.ok) { setError(await res.text()); return }
 
-      // success — refresh list & reset the form
-      await fetchGroups()
-      setName("")
-      setColor("#0F172A")
-      setIcon("scale")
-      setNewsletterTemplate("")
-      setSelectedGrantIds([])
-      setRegion("")
-      setJobFunction("")
-      setJobArea("")
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to create group")
-    }
+    await fetchGroups()
+    setName(""); setColor("#0F172A"); setIcon("scale"); setNewsletterTemplate("")
+    setSelectedGrantIds([]); setCountry(""); setJobFunction(""); setJobArea("")
   }
 
   const deleteOne = async (g: Group) => {
-    try {
-      const res = await fetch(`/api/groups?slug=${encodeURIComponent(g.slug)}`, { method: "DELETE" })
-      if (!res.ok) throw new Error(await res.text())
-      fetchGroups()
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to delete group")
-    }
+    const res = await fetch(`/api/groups?slug=${encodeURIComponent(g.slug)}`, {
+      method: "DELETE",
+      headers: accountId ? { "x-account-id": accountId } : undefined,
+    })
+    if (!res.ok) { setError(await res.text()); return }
+    fetchGroups()
   }
-
-  // ---- RENDER ------------------------------------------------------
 
   if (needsAccount) {
     return (
@@ -245,12 +237,8 @@ export default function GroupManagerPage() {
           </p>
         </div>
         <div className="rounded-xl border p-6 bg-background">
-          <p className="text-red-600 font-medium">
-            An active account is required to manage groups.
-          </p>
-          <p className="text-muted-foreground mt-1">
-            Use the account switcher in the header to select an account.
-          </p>
+          <p className="text-red-600 font-medium">An active account is required to manage groups.</p>
+          <p className="text-muted-foreground mt-1">Use the account switcher in the header to select an account.</p>
         </div>
       </div>
     )
@@ -270,11 +258,7 @@ export default function GroupManagerPage() {
       {/* Create */}
       <section className="rounded-xl border p-4 md:p-6 bg-background">
         <h2 className="text-xl font-semibold mb-4">Create New Group</h2>
-        {error && (
-          <Alert className="mb-3 rounded-none border border-line bg-[hsl(var(--muted))]">
-            <AlertDescription className="text-red-600">{error}</AlertDescription>
-          </Alert>
-        )}
+        {error && <p className="text-red-600 mb-3">{error}</p>}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -349,23 +333,6 @@ export default function GroupManagerPage() {
               <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
                 Hold <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> to select multiple.
               </p>
-
-              {selectedGrantIds.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {selectedGrantIds.map((gid) => {
-                    const p = products.find((x) => (x.grantId ?? x.id) === gid)
-                    return (
-                      <span
-                        key={gid}
-                        className="rounded bg-purple-100 px-2 py-0.5 text-xs text-purple-800"
-                        title={gid}
-                      >
-                        {(p?.label || "Grant")}: {gid.slice(0, 8)}…
-                      </span>
-                    )
-                  })}
-                </div>
-              )}
             </div>
           </div>
 
@@ -401,8 +368,8 @@ export default function GroupManagerPage() {
           {/* Demographics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Region</label>
-              <select className="w-full rounded-md border px-3 py-2" value={region} onChange={(e) => setRegion(e.target.value)}>
+              <label className="block text-sm font-medium mb-1">Country</label>
+              <select className="w-full rounded-md border px-3 py-2" value={country} onChange={(e) => setCountry(e.target.value)}>
                 <option value="">— Select country —</option>
                 {countryOpts.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -431,7 +398,7 @@ export default function GroupManagerPage() {
               type="reset"
               onClick={() => {
                 setName(""); setColor("#0F172A"); setIcon("scale"); setNewsletterTemplate("")
-                setSelectedGrantIds([]); setRegion(""); setJobFunction(""); setJobArea("")
+                setSelectedGrantIds([]); setCountry(""); setJobFunction(""); setJobArea("")
                 setError(null)
               }}
               className="rounded-md border px-4 py-2"

@@ -1,21 +1,9 @@
-/* ------------------------------------------------------------------ */
-/* components/pages/users-table.tsx                                   */
-/*  • pagination (client-side)                                        */
-/*  • group counts + icon map are *derived*, never stale              */
-/*  • writes attributes.group = <group.name>                          */
-/* ------------------------------------------------------------------ */
 "use client"
 
 import {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useTransition,
-  type DragEvent,
+  useState, useEffect, useMemo, useCallback, useTransition, type DragEvent,
 } from "react"
 
-/* ---------- ui ---------- */
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
@@ -31,37 +19,24 @@ import {
   Card, CardContent, CardHeader, CardTitle,
 } from "@/components/ui/card"
 
-/* ---------- icons ---------- */
 import {
   Crown, User as UserIcon, Users as UsersIcon,
-  Folder, Loader2, ChevronLeft, ChevronRight, icons as lucideIcons,
+  Folder, Loader2, ChevronLeft, ChevronRight,
 } from "lucide-react"
 
-/* ---------- helpers ---------- */
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
 
-/* ---------- util ---------- */
-const fetchTemplateNames = async () =>
-  (await fetch("/api/templates")).json() as Promise<string[]>
-
-const fetchTemplate = async (name: string) => {
-  const hit = DEFAULT_TEMPLATES.find((t) => t.name === name)
-  if (hit) return hit
-  const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
-  return res.ok ? await res.json() : null
+const GROUP_ICON_EMOJI: Record<string, string> = {
+  scale: "⚖️", bank: "🏛️", clipboard: "📋", shield: "🛡️", user: "👤", users: "👥",
+  briefcase: "💼", file: "📄", chart: "📈", pie: "📊", gavel: "🔨", building: "🏢",
+  folder: "🗂️", book: "📘",
 }
 
-const countGroups = (list: any[]) => {
-  const out: Record<string, number> = {}
-  list.forEach((u) => {
-    const name = u.attributes?.group
-    if (name) out[name] = (out[name] || 0) + 1
-  })
-  return out
-}
+const slugify = (s: string) =>
+  s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
 
 /* =================================================================== */
 export default function UsersTable({
@@ -71,80 +46,85 @@ export default function UsersTable({
   users : any[]
   groups: Group[]
 }) {
-  /* ---------- row state ---------- */
   const [rows, setRows] = useState(users)
   useEffect(() => setRows(users), [users])
 
-  /* ---------- pagination ---------- */
   const PER_PAGE = 25
   const [page, setPage] = useState(0)
   const pageCount = Math.ceil(rows.length / PER_PAGE)
+  const pagedRows = useMemo(() => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE), [rows, page])
+  const goFirst = () => setPage(0)
+  const goPrev  = () => setPage((p) => Math.max(0, p - 1))
+  const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
+  const goLast  = () => setPage(pageCount - 1)
 
-  const pagedRows = useMemo(
-    () => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE),
-    [rows, page],
-  )
+  const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
+  const groupByName = useMemo(() => Object.fromEntries(groups.map((g) => [g.name, g])), [groups])
+  const groupBySlug = useMemo(() => Object.fromEntries(groups.map((g) => [g.slug, g])), [groups])
 
-  const goFirst  = () => setPage(0)
-  const goPrev   = () => setPage((p) => Math.max(0, p - 1))
-  const goNext   = () => setPage((p) => Math.min(pageCount - 1, p + 1))
-  const goLast   = () => setPage(pageCount - 1)
+  const resolveGroupName = useCallback((value?: string | null) => {
+    if (!value) return null
+    if (groupByName[value]) return groupByName[value].name
+    const vSlug = slugify(value)
+    if (groupBySlug[vSlug]) return groupBySlug[vSlug].name
+    return null
+  }, [groupByName, groupBySlug])
 
-  /* ---------- derived maps ---------- */
-  // Lookups by group id (for selects / DnD) and by group name (for dot display)
-  const groupById = useMemo(
-    () => Object.fromEntries(groups.map((g) => [g.id, g])),
-    [groups],
-  )
-  const groupByName = useMemo(
-    () => Object.fromEntries(groups.map((g) => [g.name, g])),
-    [groups],
-  )
+  const countGroups = useCallback((list: any[]) => {
+    const out: Record<string, number> = {}
+    list.forEach((u) => {
+      const resolved = resolveGroupName(u.attributes?.group)
+      if (resolved) out[resolved] = (out[resolved] || 0) + 1
+    })
+    return out
+  }, [resolveGroupName])
 
-  const groupCounts = useMemo(() => countGroups(rows), [rows])
+  const groupCounts = useMemo(() => countGroups(rows), [rows, countGroups])
 
-  /* ---------- misc state ---------- */
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
   const [, startTransition]     = useTransition()
 
-  /* ---------- selection helpers ---------- */
   const toggle = (id: string) => setSelected((p) => {
-    const n = new Set(p)
-    n.has(id) ? n.delete(id) : n.add(id)
-    return n
+    const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n
   })
   const toggleAllOnPage = () =>
     setSelected((p) => {
       const onPageIds = pagedRows.map((u) => u.user_id)
       const allSelected = onPageIds.every((id) => p.has(id))
       if (allSelected) {
-        const n = new Set(p)
-        onPageIds.forEach((id) => n.delete(id))
-        return n
+        const n = new Set(p); onPageIds.forEach((id) => n.delete(id)); return n
       }
       return new Set([...p, ...onPageIds])
     })
 
-  /* ---------- bulk ops ---------- */
+  /** Normalize demographics from a group, supporting old & new keys. */
+  const extractDemographicAttrs = (g: Group) => {
+    const d = (g?.demographics || {}) as any
+    return {
+      ...(d["country"]        ? { "country": d["country"] } : d["region"] ? { "country": d["region"] } : {}),
+      ...(d["job-function"]   ? { "job-function": d["job-function"] } : d["job_function"] ? { "job-function": d["job_function"] } : {}),
+      ...(d["job-area"]       ? { "job-area": d["job-area"] } : d["job_area"] ? { "job-area": d["job_area"] } : {}),
+    }
+  }
+
   async function applyGroup(groupId: string) {
     if (!selected.size) return
-    const g = groupById[groupId]
-    if (!g) return
+    const g = groupById[groupId]; if (!g) return
     setLoading(true); setError(null)
     try {
-      // persist the *name* of the group
+      const demo = extractDemographicAttrs(g)
       await Promise.all(
         Array.from(selected).map((uid) =>
-          updateUserAttributesAction(uid, { group: g.name })
+          updateUserAttributesAction(uid, { group: g.name, ...demo }),
         ),
       )
       startTransition(() =>
         setRows((prev) =>
           prev.map((u) =>
             selected.has(u.user_id)
-              ? { ...u, attributes: { ...u.attributes, group: g.name } }
+              ? { ...u, attributes: { ...u.attributes, group: g.name, ...demo } }
               : u,
           ),
         ),
@@ -155,6 +135,16 @@ export default function UsersTable({
     } finally {
       setLoading(false)
     }
+  }
+
+  const fetchTemplateNames = async () =>
+    (await fetch("/api/templates")).json() as Promise<string[]>
+
+  const fetchTemplate = async (name: string) => {
+    const hit = DEFAULT_TEMPLATES.find((t) => t.name === name)
+    if (hit) return hit
+    const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
+    return res.ok ? await res.json() : null
   }
 
   async function applyTemplate(templateName: string) {
@@ -176,7 +166,6 @@ export default function UsersTable({
     }
   }
 
-  /* ---------- drag & drop ---------- */
   const onDragStart = useCallback((e: DragEvent, userId: string) => {
     e.dataTransfer.setData("text/plain", userId)
     e.dataTransfer.effectAllowed = "move"
@@ -192,19 +181,19 @@ export default function UsersTable({
       const draggedId = e.dataTransfer.getData("text/plain")
       const ids = selected.has(draggedId) ? Array.from(selected) : [draggedId]
 
-      const g = groupById[targetGroupId]
-      if (!g) return
+      const g = groupById[targetGroupId]; if (!g) return
+      const demo = extractDemographicAttrs(g)
 
       setLoading(true); setError(null)
       try {
         await Promise.all(
-          ids.map((uid) => updateUserAttributesAction(uid, { group: g.name })),
+          ids.map((uid) => updateUserAttributesAction(uid, { group: g.name, ...demo })),
         )
         startTransition(() =>
           setRows((prev) =>
             prev.map((u) =>
               ids.includes(u.user_id)
-                ? { ...u, attributes: { ...u.attributes, group: g.name } }
+                ? { ...u, attributes: { ...u.attributes, group: g.name, ...demo } }
                 : u,
             ),
           ),
@@ -219,13 +208,18 @@ export default function UsersTable({
     [selected, groupById],
   )
 
-  /* ---------- helpers ---------- */
   const GroupDot = ({ name }: { name?: string }) => {
-    if (!name) return null
-    const g = groupByName[name]; if (!g) return null
-    // @ts-ignore
-    const Icon = lucideIcons[g.icon] ?? UsersIcon
-    return <Icon className="h-3 w-3 ml-1" style={{ color: g.color ?? undefined }} />
+    const g = name ? (groupByName[name] ?? groupBySlug[slugify(name)]) : null
+    if (!g) return null
+    return (
+      <span
+        className="ml-1 inline-flex h-3 w-3 items-center justify-center"
+        title={g.name}
+        aria-hidden="true"
+      >
+        {GROUP_ICON_EMOJI[g.icon || ""] ?? "📁"}
+      </span>
+    )
   }
 
   const DynamicTemplateOptions = () => {
@@ -242,7 +236,28 @@ export default function UsersTable({
     )
   }
 
-  /* ---------- UI ---------- */
+  const EmailCopy = ({ email }: { email: string }) => {
+    const [copied, setCopied] = useState(false)
+    const copy = async () => {
+      try {
+        await navigator.clipboard.writeText(email)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1200)
+      } catch {}
+    }
+    return (
+      <button
+        onClick={copy}
+        className="underline decoration-dotted hover:opacity-80"
+        title="Click to copy"
+        type="button"
+      >
+        {email}
+        {copied && <span className="ml-2 text-xs text-green-700">Copied</span>}
+      </button>
+    )
+  }
+
   return (
     <>
       {error && (
@@ -251,9 +266,8 @@ export default function UsersTable({
         </Alert>
       )}
 
-      {/* bulk bar */}
       {selected.size > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted))] p-3">
+        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted)))] p-3">
           <p className="text-sm text-ink">{selected.size} selected</p>
 
           <Select onValueChange={applyGroup} disabled={loading}>
@@ -287,9 +301,7 @@ export default function UsersTable({
         </div>
       )}
 
-      {/* grid: table + folders */}
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        {/* USERS TABLE */}
         <Card className="rounded-none border border-line bg-paper">
           <CardHeader className="p-3 lg:p-4">
             <CardTitle className="flex items-center gap-2 font-serif text-lg text-ink">
@@ -354,7 +366,7 @@ export default function UsersTable({
                       </TableCell>
 
                       <TableCell className="text-[hsl(var(--muted-foreground))]">
-                        {u.identifiers.email_address}
+                        <EmailCopy email={u.identifiers.email_address} />
                       </TableCell>
 
                       <TableCell>
@@ -382,12 +394,9 @@ export default function UsersTable({
               </TableBody>
             </Table>
 
-            {/* pagination footer */}
             {pageCount > 1 && (
               <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
-                <span>
-                  Page {page + 1} / {pageCount}
-                </span>
+                <span>Page {page + 1} / {pageCount}</span>
                 <div className="flex items-center gap-1">
                   <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
                           className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
@@ -413,7 +422,7 @@ export default function UsersTable({
           </CardContent>
         </Card>
 
-        {/* GROUP “FOLDERS” */}
+        {/* GROUP FOLDERS */}
         <div className="space-y-6">
           <Card className="rounded-none border border-line bg-paper">
             <CardHeader className="p-3 lg:p-4">
@@ -433,7 +442,9 @@ export default function UsersTable({
             >
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-3">
-                  <Folder className="h-5 w-5 text-ink" aria-hidden="true" />
+                  <span className="text-lg" aria-hidden="true">
+                    {GROUP_ICON_EMOJI[g.icon || ""] ?? "📁"}
+                  </span>
                   <span className="capitalize text-ink" style={{ color: g.color ?? undefined }}>
                     {g.name}
                   </span>

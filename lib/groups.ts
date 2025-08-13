@@ -12,6 +12,7 @@ export interface Group {
   default_template: string | null
   product_grant_ids: string[]
   demographics: Record<string, unknown>
+  user_count: number
   created_at?: string
   updated_at?: string
 }
@@ -39,6 +40,7 @@ export async function listGroups(accountId: string): Promise<Group[]> {
       default_template,
       COALESCE(product_grant_ids, '{}')    AS product_grant_ids,
       COALESCE(demographics, '{}'::jsonb)  AS demographics,
+      COALESCE(user_count, 0)              AS user_count,
       created_at,
       updated_at
     FROM groups
@@ -94,7 +96,8 @@ export async function saveGroup(
       updated_at        = now()
     RETURNING
       account_id, id, slug, name, color, icon, default_template,
-      product_grant_ids, demographics, created_at, updated_at;
+      product_grant_ids, demographics, COALESCE(user_count, 0) AS user_count,
+      created_at, updated_at;
   `
 
   return rows[0] as unknown as Group
@@ -117,4 +120,38 @@ export async function deleteGroup(accountId: string, by: { id?: string; slug?: s
     return
   }
   throw new Error("id or slug is required")
+}
+
+/** Counter deltas to apply to groups.user_count */
+export type GroupCountChange = { id: string; delta: number }
+
+/**
+ * Atomically apply membership deltas, e.g.
+ *  applyGroupCountDeltas("acct-123", [{id: "...g1", delta:+10}, {id: "...g2", delta:-10}])
+ */
+export async function applyGroupCountDeltas(
+  accountId: string,
+  changes: GroupCountChange[]
+): Promise<void> {
+  const clean = (changes || [])
+    .map((c) => ({ id: String(c?.id || ""), delta: Number(c?.delta) }))
+    .filter((c) => c.id && Number.isFinite(c.delta) && c.delta !== 0)
+
+  if (!clean.length) return
+
+  await sql/* sql */`BEGIN`
+  try {
+    for (const { id, delta } of clean) {
+      await sql/* sql */`
+        UPDATE groups
+           SET user_count = GREATEST(0, COALESCE(user_count, 0) + ${delta})
+         WHERE account_id = ${accountId}
+           AND id = ${id}::uuid;
+      `
+    }
+    await sql/* sql */`COMMIT`
+  } catch (e) {
+    await sql/* sql */`ROLLBACK`
+    throw e
+  }
 }

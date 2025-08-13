@@ -24,6 +24,7 @@ import {
   Folder, Loader2, ChevronLeft, ChevronRight,
 } from "lucide-react"
 
+import { getActiveAccountId } from "@/lib/account-store"
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
@@ -46,6 +47,9 @@ export default function UsersTable({
   users : any[]
   groups: Group[]
 }) {
+  const accountId = getActiveAccountId() // header switcher populates this (client-only)
+
+  /* ---------------- data & pagination ---------------- */
   const [rows, setRows] = useState(users)
   useEffect(() => setRows(users), [users])
 
@@ -58,29 +62,28 @@ export default function UsersTable({
   const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
   const goLast  = () => setPage(pageCount - 1)
 
+  /* ---------------- groups lookup maps ---------------- */
   const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
   const groupByName = useMemo(() => Object.fromEntries(groups.map((g) => [g.name, g])), [groups])
   const groupBySlug = useMemo(() => Object.fromEntries(groups.map((g) => [g.slug, g])), [groups])
 
-  const resolveGroupName = useCallback((value?: string | null) => {
+  const resolveGroup = useCallback((value?: string | null): Group | null => {
     if (!value) return null
-    if (groupByName[value]) return groupByName[value].name
+    if (groupByName[value]) return groupByName[value]
     const vSlug = slugify(value)
-    if (groupBySlug[vSlug]) return groupBySlug[vSlug].name
+    if (groupBySlug[vSlug]) return groupBySlug[vSlug]
     return null
   }, [groupByName, groupBySlug])
 
-  const countGroups = useCallback((list: any[]) => {
-    const out: Record<string, number> = {}
-    list.forEach((u) => {
-      const resolved = resolveGroupName(u.attributes?.group)
-      if (resolved) out[resolved] = (out[resolved] || 0) + 1
-    })
-    return out
-  }, [resolveGroupName])
+  /* ---------------- persistent counts (seeded from DB) ---------------- */
+  const [counts, setCounts] = useState<Record<string, number>>(
+    () => Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0]))
+  )
+  useEffect(() => {
+    setCounts(Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0])))
+  }, [groups])
 
-  const groupCounts = useMemo(() => countGroups(rows), [rows, countGroups])
-
+  /* ---------------- selection & misc ---------------- */
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
@@ -99,7 +102,7 @@ export default function UsersTable({
       return new Set([...p, ...onPageIds])
     })
 
-  /** Normalize demographics from a group, supporting old & new keys. */
+  /** Normalize demographics from a group (supports underscore or hyphen keys). */
   const extractDemographicAttrs = (g: Group) => {
     const d = (g?.demographics || {}) as any
     return {
@@ -109,34 +112,97 @@ export default function UsersTable({
     }
   }
 
-  async function applyGroup(groupId: string) {
-    if (!selected.size) return
-    const g = groupById[groupId]; if (!g) return
+  /** Post membership deltas to server (persists DB counters). */
+  const postMembershipDeltas = async (deltas: Record<string, number>) => {
+    const changes = Object.entries(deltas)
+      .map(([id, delta]) => ({ id, delta }))
+      .filter((c) => c.delta !== 0)
+
+    if (!changes.length) return
+    try {
+      await fetch("/api/groups/membership", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accountId ? { "x-account-id": accountId } : {}),
+        },
+        body: JSON.stringify({ changes }),
+      })
+    } catch (e) {
+      // If this fails, UI remains correct but DB count won’t be updated until next action.
+      console.error("membership delta post failed", e)
+    }
+  }
+
+  /** Compute and apply counts optimistically. Keys are group IDs. */
+  const applyCountDeltasLocal = (deltas: Record<string, number>) => {
+    if (!Object.keys(deltas).length) return
+    setCounts((prev) => {
+      const next = { ...prev }
+      for (const [id, delta] of Object.entries(deltas)) {
+        next[id] = Math.max(0, (next[id] ?? 0) + (delta ?? 0))
+      }
+      return next
+    })
+  }
+
+  async function assignToGroup(targetGroupId: string, userIds: string[]) {
+    if (!userIds.length) return
+    const g = groupById[targetGroupId]; if (!g) return
+
+    // Build membership deltas: +N to target, -1 for each old group (when different)
+    const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
+    const demo = extractDemographicAttrs(g)
+
     setLoading(true); setError(null)
     try {
-      const demo = extractDemographicAttrs(g)
+      // Update Zephr user attributes
       await Promise.all(
-        Array.from(selected).map((uid) =>
+        userIds.map((uid) =>
           updateUserAttributesAction(uid, { group: g.name, ...demo }),
         ),
       )
+
+      // Update local rows
       startTransition(() =>
         setRows((prev) =>
           prev.map((u) =>
-            selected.has(u.user_id)
+            userIds.includes(u.user_id)
               ? { ...u, attributes: { ...u.attributes, group: g.name, ...demo } }
               : u,
           ),
         ),
       )
+
+      // Figure out old groups to decrement
+      const oldIds = new Set<string>()
+      for (const u of rows) {
+        if (!userIds.includes(u.user_id)) continue
+        const old = resolveGroup(u.attributes?.group)
+        const oldId = old?.id
+        if (oldId && oldId !== targetGroupId) oldIds.add(oldId)
+      }
+      for (const id of oldIds) {
+        deltas[id] = (deltas[id] ?? 0) - 1
+      }
+
+      // Persist + optimistic update
+      applyCountDeltasLocal(deltas)
+      await postMembershipDeltas(deltas)
+
       setSelected(new Set())
     } catch (e: any) {
-      setError(e?.message ?? "Bulk group assign failed")
+      setError(e?.message ?? "Group assign failed")
     } finally {
       setLoading(false)
     }
   }
 
+  async function applyGroup(targetGroupId: string) {
+    await assignToGroup(targetGroupId, Array.from(selected))
+  }
+
+  /* ---------------- templates bulk ---------------- */
   const fetchTemplateNames = async () =>
     (await fetch("/api/templates")).json() as Promise<string[]>
 
@@ -166,6 +232,7 @@ export default function UsersTable({
     }
   }
 
+  /* ---------------- drag & drop ---------------- */
   const onDragStart = useCallback((e: DragEvent, userId: string) => {
     e.dataTransfer.setData("text/plain", userId)
     e.dataTransfer.effectAllowed = "move"
@@ -180,34 +247,12 @@ export default function UsersTable({
       e.preventDefault()
       const draggedId = e.dataTransfer.getData("text/plain")
       const ids = selected.has(draggedId) ? Array.from(selected) : [draggedId]
-
-      const g = groupById[targetGroupId]; if (!g) return
-      const demo = extractDemographicAttrs(g)
-
-      setLoading(true); setError(null)
-      try {
-        await Promise.all(
-          ids.map((uid) => updateUserAttributesAction(uid, { group: g.name, ...demo })),
-        )
-        startTransition(() =>
-          setRows((prev) =>
-            prev.map((u) =>
-              ids.includes(u.user_id)
-                ? { ...u, attributes: { ...u.attributes, group: g.name, ...demo } }
-                : u,
-            ),
-          ),
-        )
-        setSelected(new Set())
-      } catch (e: any) {
-        setError(e?.message ?? "Drag-drop failed")
-      } finally {
-        setLoading(false)
-      }
+      await assignToGroup(targetGroupId, ids)
     },
-    [selected, groupById],
+    [selected, rows, groupById, accountId] // rows is used for old count calc
   )
 
+  /* ---------------- small helpers ---------------- */
   const GroupDot = ({ name }: { name?: string }) => {
     const g = name ? (groupByName[name] ?? groupBySlug[slugify(name)]) : null
     if (!g) return null
@@ -258,6 +303,7 @@ export default function UsersTable({
     )
   }
 
+  /* ---------------- UI ---------------- */
   return (
     <>
       {error && (
@@ -267,7 +313,7 @@ export default function UsersTable({
       )}
 
       {selected.size > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted)))] p-3">
+        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted))] p-3">
           <p className="text-sm text-ink">{selected.size} selected</p>
 
           <Select onValueChange={applyGroup} disabled={loading}>
@@ -450,7 +496,7 @@ export default function UsersTable({
                   </span>
                 </div>
                 <div className="flex h-7 w-7 items-center justify-center rounded-none border border-line bg-paper text-xs font-bold text-ink">
-                  {groupCounts[g.name] || 0}
+                  {counts[g.id] ?? 0}
                 </div>
               </CardContent>
             </Card>

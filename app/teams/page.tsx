@@ -11,7 +11,7 @@ export default function TeamsPage() {
   // Server component wrapper ensures this page inherits app/layout.tsx
   return (
     <MainLayout>
-      <TeamManagerPage />
+      <TeamManagerPage accountId={""} />
     </MainLayout>
   )
 }

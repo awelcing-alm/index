@@ -1,8 +1,8 @@
 /* ------------------------------------------------------------------ */
 /* components/pages/users-table.tsx                                   */
 /*  • pagination (client-side)                                        */
-/*  • group counts + icon/color are *derived*, never stale            */
-/*  • “group” user attribute is used for assignment                   */
+/*  • group counts + icon map are *derived*, never stale              */
+/*  • writes attributes.group = <group.name>                          */
 /* ------------------------------------------------------------------ */
 "use client"
 
@@ -34,7 +34,7 @@ import {
 /* ---------- icons ---------- */
 import {
   Crown, User as UserIcon, Users as UsersIcon,
-  Folder, Loader2, ChevronLeft, ChevronRight,
+  Folder, Loader2, ChevronLeft, ChevronRight, icons as lucideIcons,
 } from "lucide-react"
 
 /* ---------- helpers ---------- */
@@ -42,7 +42,6 @@ import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
-
 
 /* ---------- util ---------- */
 const fetchTemplateNames = async () =>
@@ -58,8 +57,8 @@ const fetchTemplate = async (name: string) => {
 const countGroups = (list: any[]) => {
   const out: Record<string, number> = {}
   list.forEach((u) => {
-    const slug = u.attributes?.group
-    if (slug) out[slug] = (out[slug] || 0) + 1
+    const name = u.attributes?.group
+    if (name) out[name] = (out[name] || 0) + 1
   })
   return out
 }
@@ -92,9 +91,13 @@ export default function UsersTable({
   const goLast   = () => setPage(pageCount - 1)
 
   /* ---------- derived maps ---------- */
-  // key by slug, since user.attributes.group stores the slug
-  const groupBySlug = useMemo(
-    () => Object.fromEntries(groups.map((g) => [g.slug, g] as const)),
+  // Lookups by group id (for selects / DnD) and by group name (for dot display)
+  const groupById = useMemo(
+    () => Object.fromEntries(groups.map((g) => [g.id, g])),
+    [groups],
+  )
+  const groupByName = useMemo(
+    () => Object.fromEntries(groups.map((g) => [g.name, g])),
     [groups],
   )
 
@@ -104,7 +107,7 @@ export default function UsersTable({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
-  const [, startTransition] = useTransition()
+  const [, startTransition]     = useTransition()
 
   /* ---------- selection helpers ---------- */
   const toggle = (id: string) => setSelected((p) => {
@@ -125,21 +128,23 @@ export default function UsersTable({
     })
 
   /* ---------- bulk ops ---------- */
-  async function applyGroup(groupSlug: string) {
+  async function applyGroup(groupId: string) {
     if (!selected.size) return
+    const g = groupById[groupId]
+    if (!g) return
     setLoading(true); setError(null)
     try {
-      // Store the slug in Zephr user attributes (stable across renames of id)
+      // persist the *name* of the group
       await Promise.all(
         Array.from(selected).map((uid) =>
-          updateUserAttributesAction(uid, { group: groupSlug }),
+          updateUserAttributesAction(uid, { group: g.name })
         ),
       )
       startTransition(() =>
         setRows((prev) =>
           prev.map((u) =>
             selected.has(u.user_id)
-              ? { ...u, attributes: { ...u.attributes, group: groupSlug } }
+              ? { ...u, attributes: { ...u.attributes, group: g.name } }
               : u,
           ),
         ),
@@ -182,21 +187,24 @@ export default function UsersTable({
   }, [])
 
   const onDrop = useCallback(
-    async (e: DragEvent, targetSlug: string) => {
+    async (e: DragEvent, targetGroupId: string) => {
       e.preventDefault()
       const draggedId = e.dataTransfer.getData("text/plain")
       const ids = selected.has(draggedId) ? Array.from(selected) : [draggedId]
 
+      const g = groupById[targetGroupId]
+      if (!g) return
+
       setLoading(true); setError(null)
       try {
         await Promise.all(
-          ids.map((uid) => updateUserAttributesAction(uid, { group: targetSlug })),
+          ids.map((uid) => updateUserAttributesAction(uid, { group: g.name })),
         )
         startTransition(() =>
           setRows((prev) =>
             prev.map((u) =>
               ids.includes(u.user_id)
-                ? { ...u, attributes: { ...u.attributes, group: targetSlug } }
+                ? { ...u, attributes: { ...u.attributes, group: g.name } }
                 : u,
             ),
           ),
@@ -208,22 +216,16 @@ export default function UsersTable({
         setLoading(false)
       }
     },
-    [selected],
+    [selected, groupById],
   )
 
   /* ---------- helpers ---------- */
-  const GroupDot = ({ slug }: { slug?: string }) => {
-    if (!slug) return null
-    const g = groupBySlug[slug]; if (!g) return null
-    const style: React.CSSProperties = {
-      background: g.color || "currentColor",
-      display: "inline-block",
-      borderRadius: 2,
-      height: 8,
-      width: 8,
-      marginLeft: 6,
-    }
-    return <span aria-label={g.name} title={g.name} style={style} />
+  const GroupDot = ({ name }: { name?: string }) => {
+    if (!name) return null
+    const g = groupByName[name]; if (!g) return null
+    // @ts-ignore
+    const Icon = lucideIcons[g.icon] ?? UsersIcon
+    return <Icon className="h-3 w-3 ml-1" style={{ color: g.color ?? undefined }} />
   }
 
   const DynamicTemplateOptions = () => {
@@ -260,7 +262,7 @@ export default function UsersTable({
             </SelectTrigger>
             <SelectContent className="max-h-60 overflow-y-auto rounded-none border border-line bg-paper">
               {groups.map((g) => (
-                <SelectItem key={g.slug} value={g.slug} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">
+                <SelectItem key={g.id} value={g.id} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">
                   {g.name}
                 </SelectItem>
               ))}
@@ -318,21 +320,21 @@ export default function UsersTable({
                 {pagedRows.map((u) => {
                   const fn = u.attributes?.firstname || ""
                   const ln = u.attributes?.lastname || u.attributes?.surname || ""
-                  const name = fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
+                  const displayName = fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
 
                   return (
                     <TableRow
                       key={u.user_id}
                       draggable
                       onDragStart={(e) => onDragStart(e, u.user_id)}
-                      className="border-line hover:bg-[hsl(var(--muted)))]"
+                      className="border-line hover:bg-[hsl(var(--muted))]"
                     >
                       <TableCell>
                         <Checkbox
                           checked={selected.has(u.user_id)}
                           onCheckedChange={() => toggle(u.user_id)}
                           className="rounded-none"
-                          aria-label={`Select ${name}`}
+                          aria-label={`Select ${displayName}`}
                         />
                       </TableCell>
 
@@ -341,12 +343,12 @@ export default function UsersTable({
                           <Avatar className="h-8 w-8 rounded-none border border-line">
                             <AvatarImage src="/placeholder.svg" />
                             <AvatarFallback className="bg-paper text-ink">
-                              {name.charAt(0).toUpperCase()}
+                              {displayName.charAt(0).toUpperCase()}
                             </AvatarFallback>
                           </Avatar>
                           <span className="flex items-center font-medium text-ink">
-                            {name}
-                            <GroupDot slug={u.attributes?.group} />
+                            {displayName}
+                            <GroupDot name={u.attributes?.group} />
                           </span>
                         </div>
                       </TableCell>
@@ -368,9 +370,6 @@ export default function UsersTable({
                       </TableCell>
 
                       <TableCell>
-                        {/* Keep your existing edit button */}
-                        {/* If you renamed props, update accordingly */}
-                        {/* @ts-ignore - component lives elsewhere in your codebase */}
                         <UserEditButton
                           userId={u.user_id}
                           userEmail={u.identifiers.email_address}
@@ -414,7 +413,7 @@ export default function UsersTable({
           </CardContent>
         </Card>
 
-        {/* GROUP FOLDERS */}
+        {/* GROUP “FOLDERS” */}
         <div className="space-y-6">
           <Card className="rounded-none border border-line bg-paper">
             <CardHeader className="p-3 lg:p-4">
@@ -426,9 +425,9 @@ export default function UsersTable({
 
           {groups.map((g) => (
             <Card
-              key={g.slug}
+              key={g.id}
               onDragOver={onDragOver}
-              onDrop={(e) => onDrop(e, g.slug)}
+              onDrop={(e) => onDrop(e, g.id)}
               className="cursor-pointer rounded-none border border-line bg-paper transition-colors hover:bg-[hsl(var(--muted))]"
               title={`Drop users to assign to ${g.name}`}
             >
@@ -440,7 +439,7 @@ export default function UsersTable({
                   </span>
                 </div>
                 <div className="flex h-7 w-7 items-center justify-center rounded-none border border-line bg-paper text-xs font-bold text-ink">
-                  {groupCounts[g.slug] || 0}
+                  {groupCounts[g.name] || 0}
                 </div>
               </CardContent>
             </Card>

@@ -13,7 +13,7 @@ import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 /* ---------- client component ---------- */
 import UsersTable from "./users-table"
 
-export async function UsersPage() {
+export default async function UsersPage() {
   const session = await getCurrentUser()
   const acct = session?.activeAccount
 
@@ -30,11 +30,11 @@ export async function UsersPage() {
     )
   }
 
-  const accountId = acct.account_id
+  const accountId = (acct as any).account_id ?? (acct as any).id ?? ""
 
   const [usersRes, groupsRes] = await Promise.allSettled([
     getUsersForCurrentAccount(),
-    listGroups(accountId),
+    listGroups(accountId as string),
   ])
 
   const users  = usersRes.status  === "fulfilled" ? usersRes.value  : ([] as any[])
@@ -62,7 +62,12 @@ export async function UsersPage() {
             </AlertDescription>
           </Alert>
         ) : (
-          <Suspense fallback={<p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>}>
+          <Suspense
+            fallback={
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>
+            }
+          >
+            {/* Pass groups so table can assign & count by group NAME */}
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}
@@ -70,5 +75,3 @@ export async function UsersPage() {
     </Card>
   )
 }
-
-export default UsersPage

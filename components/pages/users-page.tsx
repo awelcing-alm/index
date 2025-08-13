@@ -1,22 +1,22 @@
 // components/pages/users-page.tsx
-import { Suspense } from "react";
-import { cookies } from "next/headers";
+import { Suspense } from "react"
+import { cookies } from "next/headers"
 
 /* ---------- server helpers ---------- */
-import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions";
-import { listTeams } from "@/lib/teams";
+import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
+import { listGroups } from "@/lib/groups"
 
 /* ---------- ui ---------- */
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertTriangle, Users as UsersIcon } from "lucide-react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 
 /* ---------- client component ---------- */
-import UsersTable from "./users-table";
+import UsersTable from "./users-table"
 
 export async function UsersPage() {
-  const session = await getCurrentUser();
-  const acct = session?.activeAccount;
+  const session = await getCurrentUser()
+  const acct = session?.activeAccount
 
   if (!acct) {
     return (
@@ -28,27 +28,27 @@ export async function UsersPage() {
           </AlertDescription>
         </Alert>
       </div>
-    );
+    )
   }
 
-  const cookieStore = await cookies();
+  const cookieStore = await cookies()
   const accountId =
-    (acct as any).id ??
     (acct as any).account_id ??
+    (acct as any).id ??
     cookieStore.get("active_account_id")?.value ??
-    "";
+    ""
 
-  const [usersRes, teamsRes] = await Promise.allSettled([
+  const [usersRes, groupsRes] = await Promise.allSettled([
     getUsersForCurrentAccount(),
-    listTeams(accountId),
-  ]);
+    listGroups(accountId as string),
+  ])
 
-  const users = usersRes.status === "fulfilled" ? usersRes.value : ([] as any[]);
-  const teams = teamsRes.status === "fulfilled" ? teamsRes.value : ([] as any[]);
+  const users = usersRes.status === "fulfilled" ? usersRes.value : ([] as any[])
+  const groups = groupsRes.status === "fulfilled" ? groupsRes.value : ([] as any[])
   const loadError =
     usersRes.status === "rejected"
       ? usersRes.reason?.message ?? "Unknown error"
-      : null;
+      : null
 
   return (
     <Card className="rounded-none border border-line bg-paper">
@@ -73,12 +73,12 @@ export async function UsersPage() {
               <p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>
             }
           >
-            <UsersTable users={users} teams={teams} />
+            <UsersTable users={users} groups={groups} />
           </Suspense>
         )}
       </CardContent>
     </Card>
-  );
+  )
 }
 
-export default UsersPage;
+export default UsersPage

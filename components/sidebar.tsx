@@ -19,7 +19,7 @@ const navItems = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/users", icon: Users, label: "Users" },            // fixed
   { href: "/templates", icon: FileText, label: "Templates" },
-  { href: "/teams", icon: UserCircle2, label: "Teams" },
+  { href: "/groups", icon: UserCircle2, label: "Groups" },
   { href: "/products", icon: Package, label: "Products" },
   { href: "/bulk-ops", icon: Layers, label: "Bulk Ops" },
 ];

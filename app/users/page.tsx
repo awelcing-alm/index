@@ -4,7 +4,7 @@ import { MainLayout } from "@/components/main-layout"
 
 
 export const metadata = {
-  title: "Teams",
+  title: "Users",
 }
 
 export default function TeamsPage() {

@@ -1,19 +1,34 @@
-// lib/user-actions.ts
 "use server"
 
-import { adminApiCall } from "@/lib/api-client"
+import type { ZephrUser } from "@/lib/zephr-types"
+import { getUserDetails, updateUserAttributes } from "@/lib/user-api"
 
+/**
+ * Fetch a single user with full attributes (Admin API).
+ * Thin server-action wrapper around lib/user-api.ts for UI components to call.
+ */
+export async function getUserDetailsAction(userId: string): Promise<ZephrUser> {
+  try {
+    return await getUserDetails(userId)
+  } catch (err: any) {
+    // Re-throw a clean message so client components show a helpful error
+    throw new Error(err?.message || "Failed to fetch user details")
+  }
+}
+
+/**
+ * Patch attributes for a user (Admin API).
+ * Uses the correct endpoint: /v3/users/{id}/attributes with a plain attributes object.
+ */
 export async function updateUserAttributesAction(
   userId: string,
-  patch: Record<string, any>
-) {
-  // We only update attributes; Zephr accepts partial updates
-  // NOTE: we assume { attributes: { ...patch } } payload. Adjust if your client differs.
-  const body = JSON.stringify({ attributes: patch })
-  const res = await adminApiCall(`/v3/users/${encodeURIComponent(userId)}`, {
-    method: "PATCH",
-    body,
-  })
-  // If your adminApiCall throws on !ok, nothing else to do here.
-  return res
+  attributes: Record<string, any>
+): Promise<{ success: true }> {
+  try {
+    await updateUserAttributes(userId, attributes)
+    return { success: true as const }
+  } catch (err: any) {
+    // Let callers catch and display; throw so UI paths that rely on try/catch keep working
+    throw new Error(err?.message || "Failed to update user attributes")
+  }
 }

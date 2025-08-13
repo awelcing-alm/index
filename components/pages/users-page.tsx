@@ -13,7 +13,7 @@ import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 /* ---------- client component ---------- */
 import UsersTable from "./users-table"
 
-export default async function UsersPage() {
+async function UsersPage() {
   const session = await getCurrentUser()
   const acct = session?.activeAccount
 
@@ -62,12 +62,7 @@ export default async function UsersPage() {
             </AlertDescription>
           </Alert>
         ) : (
-          <Suspense
-            fallback={
-              <p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>
-            }
-          >
-            {/* Pass groups so table can assign & count by group NAME */}
+          <Suspense fallback={<p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>}>
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}
@@ -75,3 +70,6 @@ export default async function UsersPage() {
     </Card>
   )
 }
+
+export default UsersPage
+export { UsersPage }

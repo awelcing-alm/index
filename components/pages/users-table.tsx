@@ -1,6 +1,6 @@
 "use client"
 
-import {
+import React, {
   useState, useEffect, useMemo, useCallback, useTransition, type DragEvent,
 } from "react"
 
@@ -11,7 +11,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Select, SelectTrigger, SelectValue, SelectItem, SelectContent,
 } from "@/components/ui/select"
@@ -30,6 +29,8 @@ import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
 
+type GroupWithCount = Group & { user_count?: number }
+
 const GROUP_ICON_EMOJI: Record<string, string> = {
   scale: "⚖️", bank: "🏛️", clipboard: "📋", shield: "🛡️", user: "👤", users: "👥",
   briefcase: "💼", file: "📄", chart: "📈", pie: "📊", gavel: "🔨", building: "🏢",
@@ -39,15 +40,56 @@ const GROUP_ICON_EMOJI: Record<string, string> = {
 const slugify = (s: string) =>
   s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
 
-/* =================================================================== */
+/** Ensure <tr> has only element children (prevents whitespace hydration errors). */
+const StrictRow = ({
+  className,
+  children,
+  ...rest
+}: React.HTMLAttributes<HTMLTableRowElement> & { children: React.ReactNode }) => (
+  <TableRow className={className} {...rest}>
+    {React.Children.toArray(children).filter((c) => typeof c !== "string")}
+  </TableRow>
+)
+
+/* ---------------- helpers for robust group resolution ---------------- */
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+/** Extract any plausible stored value for the user's group from Zephr payloads. */
+function getRawGroupValue(u: any): string | null {
+  const a = u?.attributes ?? {}
+
+  const candidates: unknown[] = [
+    a.group,
+    a.Group,
+    a["group-name"],
+    a["group_name"],
+    a["group-id"],
+    a["group_id"],
+    a["group-slug"],
+    a["group_slug"],
+    u.group,
+  ]
+
+  for (const c of candidates) {
+    if (!c) continue
+    if (typeof c === "string") return c.trim()
+    if (typeof c === "object" && c && "value" in (c as any) && typeof (c as any).value === "string") {
+      return (c as any).value.trim()
+    }
+  }
+
+  return null
+}
+
 export default function UsersTable({
   users,
   groups,
 }: {
-  users : any[]
-  groups: Group[]
+  users: any[]
+  groups: GroupWithCount[]
 }) {
-  const accountId = getActiveAccountId() // header switcher populates this (client-only)
+  const accountId = getActiveAccountId()
 
   /* ---------------- data & pagination ---------------- */
   const [rows, setRows] = useState(users)
@@ -65,15 +107,34 @@ export default function UsersTable({
   /* ---------------- groups lookup maps ---------------- */
   const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
   const groupByName = useMemo(() => Object.fromEntries(groups.map((g) => [g.name, g])), [groups])
+  const groupByNameLower = useMemo(
+    () => Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g])),
+    [groups]
+  )
   const groupBySlug = useMemo(() => Object.fromEntries(groups.map((g) => [g.slug, g])), [groups])
+  const groupBySlugifiedName = useMemo(
+    () => Object.fromEntries(groups.map((g) => [slugify(g.name), g])),
+    [groups]
+  )
 
-  const resolveGroup = useCallback((value?: string | null): Group | null => {
+  /** Resolve a stored value (id/name/slug/messy) to a known group. */
+  const resolveGroupFromValue = useCallback((value?: string | null): GroupWithCount | null => {
     if (!value) return null
-    if (groupByName[value]) return groupByName[value]
-    const vSlug = slugify(value)
+    const raw = String(value).trim()
+    if (!raw) return null
+
+    if (UUID_V4.test(raw) && groupById[raw]) return groupById[raw]          // id
+    if (groupByName[raw]) return groupByName[raw]                            // exact name
+    const lower = raw.toLowerCase()
+    if (groupByNameLower[lower]) return groupByNameLower[lower]              // case-insensitive name
+    if (groupBySlug[raw]) return groupBySlug[raw]                            // exact slug
+
+    const vSlug = slugify(raw)                                               // slugify fallback
     if (groupBySlug[vSlug]) return groupBySlug[vSlug]
+    if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
+
     return null
-  }, [groupByName, groupBySlug])
+  }, [groupById, groupByName, groupByNameLower, groupBySlug, groupBySlugifiedName])
 
   /* ---------------- persistent counts (seeded from DB) ---------------- */
   const [counts, setCounts] = useState<Record<string, number>>(
@@ -85,9 +146,9 @@ export default function UsersTable({
 
   /* ---------------- selection & misc ---------------- */
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
-  const [, startTransition]     = useTransition()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [, startTransition] = useTransition()
 
   const toggle = (id: string) => setSelected((p) => {
     const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -103,12 +164,12 @@ export default function UsersTable({
     })
 
   /** Normalize demographics from a group (supports underscore or hyphen keys). */
-  const extractDemographicAttrs = (g: Group) => {
+  const extractDemographicAttrs = (g: GroupWithCount) => {
     const d = (g?.demographics || {}) as any
     return {
-      ...(d["country"]        ? { "country": d["country"] } : d["region"] ? { "country": d["region"] } : {}),
-      ...(d["job-function"]   ? { "job-function": d["job-function"] } : d["job_function"] ? { "job-function": d["job_function"] } : {}),
-      ...(d["job-area"]       ? { "job-area": d["job-area"] } : d["job_area"] ? { "job-area": d["job_area"] } : {}),
+      ...(d["country"] ? { "country": d["country"] } : d["region"] ? { "country": d["region"] } : {}),
+      ...(d["job-function"] ? { "job-function": d["job-function"] } : d["job_function"] ? { "job-function": d["job_function"] } : {}),
+      ...(d["job-area"] ? { "job-area": d["job-area"] } : d["job_area"] ? { "job-area": d["job_area"] } : {}),
     }
   }
 
@@ -129,7 +190,6 @@ export default function UsersTable({
         body: JSON.stringify({ changes }),
       })
     } catch (e) {
-      // If this fails, UI remains correct but DB count won’t be updated until next action.
       console.error("membership delta post failed", e)
     }
   }
@@ -150,7 +210,6 @@ export default function UsersTable({
     if (!userIds.length) return
     const g = groupById[targetGroupId]; if (!g) return
 
-    // Build membership deltas: +N to target, -1 for each old group (when different)
     const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
     const demo = extractDemographicAttrs(g)
 
@@ -163,7 +222,7 @@ export default function UsersTable({
         ),
       )
 
-      // Update local rows
+      // Update local rows immediately
       startTransition(() =>
         setRows((prev) =>
           prev.map((u) =>
@@ -174,11 +233,11 @@ export default function UsersTable({
         ),
       )
 
-      // Figure out old groups to decrement
+      // Decrement old groups (based on pre-update values we still have in `rows`)
       const oldIds = new Set<string>()
       for (const u of rows) {
         if (!userIds.includes(u.user_id)) continue
-        const old = resolveGroup(u.attributes?.group)
+        const old = resolveGroupFromValue(getRawGroupValue(u))
         const oldId = old?.id
         if (oldId && oldId !== targetGroupId) oldIds.add(oldId)
       }
@@ -186,7 +245,6 @@ export default function UsersTable({
         deltas[id] = (deltas[id] ?? 0) - 1
       }
 
-      // Persist + optimistic update
       applyCountDeltasLocal(deltas)
       await postMembershipDeltas(deltas)
 
@@ -249,24 +307,10 @@ export default function UsersTable({
       const ids = selected.has(draggedId) ? Array.from(selected) : [draggedId]
       await assignToGroup(targetGroupId, ids)
     },
-    [selected, rows, groupById, accountId] // rows is used for old count calc
+    [selected, rows, groupById, accountId]
   )
 
-  /* ---------------- small helpers ---------------- */
-  const GroupDot = ({ name }: { name?: string }) => {
-    const g = name ? (groupByName[name] ?? groupBySlug[slugify(name)]) : null
-    if (!g) return null
-    return (
-      <span
-        className="ml-1 inline-flex h-3 w-3 items-center justify-center"
-        title={g.name}
-        aria-hidden="true"
-      >
-        {GROUP_ICON_EMOJI[g.icon || ""] ?? "📁"}
-      </span>
-    )
-  }
-
+  /* ---------------- misc helpers ---------------- */
   const DynamicTemplateOptions = () => {
     const [names, setNames] = useState<string[]>([])
     useEffect(() => { fetchTemplateNames().then(setNames).catch(console.error) }, [])
@@ -358,7 +402,7 @@ export default function UsersTable({
           <CardContent className="p-0">
             <Table>
               <TableHeader>
-                <TableRow className="border-line hover:bg-[hsl(var(--muted))]">
+                <StrictRow className="border-line hover:bg-[hsl(var(--muted))]">
                   <TableHead>
                     <Checkbox
                       checked={pagedRows.length > 0 && pagedRows.every((u) => selected.has(u.user_id))}
@@ -371,7 +415,7 @@ export default function UsersTable({
                   <TableHead className="text-ink">Email</TableHead>
                   <TableHead className="text-ink">Role</TableHead>
                   <TableHead className="text-ink">Actions</TableHead>
-                </TableRow>
+                </StrictRow>
               </TableHeader>
 
               <TableBody>
@@ -381,11 +425,11 @@ export default function UsersTable({
                   const displayName = fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
 
                   return (
-                    <TableRow
+                    <StrictRow
                       key={u.user_id}
-                      draggable
-                      onDragStart={(e) => onDragStart(e, u.user_id)}
                       className="border-line hover:bg-[hsl(var(--muted))]"
+                      draggable
+                      onDragStart={(e) => onDragStart(e as any, u.user_id)}
                     >
                       <TableCell>
                         <Checkbox
@@ -397,18 +441,7 @@ export default function UsersTable({
                       </TableCell>
 
                       <TableCell>
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8 rounded-none border border-line">
-                            <AvatarImage src="/placeholder.svg" />
-                            <AvatarFallback className="bg-paper text-ink">
-                              {displayName.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="flex items-center font-medium text-ink">
-                            {displayName}
-                            <GroupDot name={u.attributes?.group} />
-                          </span>
-                        </div>
+                        <span className="font-medium text-ink">{displayName}</span>
                       </TableCell>
 
                       <TableCell className="text-[hsl(var(--muted-foreground))]">
@@ -432,9 +465,10 @@ export default function UsersTable({
                           userId={u.user_id}
                           userEmail={u.identifiers.email_address}
                           existingAttributes={u.attributes}
+                          groups={groups}
                         />
                       </TableCell>
-                    </TableRow>
+                    </StrictRow>
                   )
                 })}
               </TableBody>
@@ -445,20 +479,20 @@ export default function UsersTable({
                 <span>Page {page + 1} / {pageCount}</span>
                 <div className="flex items-center gap-1">
                   <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
-                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
                     <ChevronLeft className="h-4 w-4" />
                     <ChevronLeft className="h-4 w-4 -ml-2" />
                   </Button>
                   <Button size="icon" variant="ghost" onClick={goPrev} disabled={page === 0}
-                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <Button size="icon" variant="ghost" onClick={goNext} disabled={page === pageCount - 1}
-                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                   <Button size="icon" variant="ghost" onClick={goLast} disabled={page === pageCount - 1}
-                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
                     <ChevronRight className="h-4 w-4" />
                     <ChevronRight className="h-4 w-4 -ml-2" />
                   </Button>
@@ -482,7 +516,7 @@ export default function UsersTable({
             <Card
               key={g.id}
               onDragOver={onDragOver}
-              onDrop={(e) => onDrop(e, g.id)}
+              onDrop={(e) => onDrop(e as any, g.id)}
               className="cursor-pointer rounded-none border border-line bg-paper transition-colors hover:bg-[hsl(var(--muted))]"
               title={`Drop users to assign to ${g.name}`}
             >

@@ -186,64 +186,64 @@ export default function TeamConfigurator({ onCreated, initial }: Props) {
     setSelectedGrantIds(values)
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setSuccess(null)
+ async function handleSubmit(e: React.FormEvent) {
+  e.preventDefault()
+  setError(null)
+  setSuccess(null)
 
-    if (!name.trim()) {
-      setError("Team name is required")
-      return
-    }
-
-    // For create + edit we upsert using (account_id, slug)
-    const slug = initial?.id ? (initial?.demographics?.["slug"] as string) || slugify(name) : slugify(name)
-
-    const payload = {
-      // NOTE: we do NOT send `id` on create; DB will generate UUID
-      slug,
-      name: name.trim(),
-      color: color || null,
-      icon: icon || null,
-      default_template: newsletterTemplate || null,
-      product_grant_ids: selectedGrantIds, // strings -> stored as TEXT[]
-      demographics: {
-        ...(region ? { region } : {}),
-        ...(jobFunction ? { job_function: jobFunction } : {}),
-        ...(jobArea ? { job_area: jobArea } : {}),
-      },
-    }
-
-    try {
-      setLoading(true)
-      const res = await fetch("/api/teams", {
-        method: "POST", // upsert on the API (server resolves internal account_id)
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) throw new Error(await res.text())
-
-      setSuccess(initial ? "Team updated" : "Team created")
-      onCreated?.()
-
-      if (!initial) {
-        // reset only in create mode
-        setName("")
-        setColor("#0F172A")
-        setIcon("scale")
-        setNewsletterTemplate("")
-        setSelectedGrantIds([])
-        setRegion("")
-        setJobFunction("")
-        setJobArea("")
-      }
-    } catch (err: any) {
-      console.error("[TeamConfigurator] save failed", err)
-      setError(err?.message ?? "Save failed")
-    } finally {
-      setLoading(false)
-    }
+  if (!name.trim()) {
+    setError("Team name is required")
+    return
   }
+
+  // 👇 bring back an id for API validation; use slugified name
+  const idToUse = initial?.id ?? slugify(name)
+  const slug = idToUse
+
+  const payload = {
+    id: idToUse,                  // 👈 add this back so the API is happy
+    slug,
+    name: name.trim(),
+    color: color || null,
+    icon: icon || null,
+    default_template: newsletterTemplate || null,
+    product_grant_ids: selectedGrantIds,
+    demographics: {
+      ...(region ? { region } : {}),
+      ...(jobFunction ? { job_function: jobFunction } : {}),
+      ...(jobArea ? { job_area: jobArea } : {}),
+    },
+  }
+
+  try {
+    setLoading(true)
+    const res = await fetch("/api/teams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) throw new Error(await res.text())
+
+    setSuccess(initial ? "Team updated" : "Team created")
+    onCreated?.()
+
+    if (!initial) {
+      setName("")
+      setColor("#0F172A")
+      setIcon("scale")
+      setNewsletterTemplate("")
+      setSelectedGrantIds([])
+      setRegion("")
+      setJobFunction("")
+      setJobArea("")
+    }
+  } catch (err: any) {
+    console.error("[TeamConfigurator] save failed", err)
+    setError(err?.message ?? "Save failed")
+  } finally {
+    setLoading(false)
+  }
+}
 
   // ---------- UI ----------
   return (

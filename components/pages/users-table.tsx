@@ -1,3 +1,4 @@
+// components/pages/users-table.tsx
 "use client"
 
 import React, {
@@ -30,6 +31,15 @@ import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
 
 type GroupWithCount = Group & { user_count?: number }
+type UiUser = {
+  user_id: string
+  identifiers: { email_address: string }
+  attributes: Record<string, any>
+  user_type?: string | null
+  group_id?: string | null
+  group_icon?: string | null
+  group_name?: string | null
+}
 
 const GROUP_ICON_EMOJI: Record<string, string> = {
   scale: "⚖️", bank: "🏛️", clipboard: "📋", shield: "🛡️", user: "👤", users: "👥",
@@ -37,15 +47,15 @@ const GROUP_ICON_EMOJI: Record<string, string> = {
   folder: "🗂️", book: "📘",
 }
 
-const slugify = (s: string) =>
-  s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
-
 /** Ensure <tr> has only element children (prevents whitespace hydration errors). */
 const StrictRow = ({
   className,
   children,
   ...rest
-}: React.HTMLAttributes<HTMLTableRowElement> & { children: React.ReactNode }) => (
+}: {
+  className?: string
+  children: React.ReactNode
+} & React.HTMLAttributes<HTMLTableRowElement>) => (
   <TableRow className={className} {...rest}>
     {React.Children.toArray(children).filter((c) => typeof c !== "string")}
   </TableRow>
@@ -55,11 +65,15 @@ const StrictRow = ({
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function getRawGroupValue(u: any): string | null {
+const slugify = (s: string) =>
+  s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
+
+/** Extract any plausible stored value for the user's group from Zephr payloads. */
+function getRawGroupValue(u: UiUser): string | null {
   const a = u?.attributes ?? {}
   const candidates: unknown[] = [
     a.group, a.Group, a["group-name"], a["group_name"],
-    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"], u.group,
+    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"],
   ]
   for (const c of candidates) {
     if (!c) continue
@@ -75,7 +89,7 @@ export default function UsersTable({
   users,
   groups,
 }: {
-  users: any[]
+  users: UiUser[]
   groups: GroupWithCount[]
 }) {
   const accountId = getActiveAccountId()
@@ -89,13 +103,12 @@ export default function UsersTable({
   const pageCount = Math.ceil(rows.length / PER_PAGE)
   const pagedRows = useMemo(() => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE), [rows, page])
   const goFirst = () => setPage(0)
-  const goPrev = () => setPage((p) => Math.max(0, p - 1))
-  const goNext = () => setPage((p) => Math.min(pageCount - 1, p + 1))
-  const goLast = () => setPage(pageCount - 1)
+  const goPrev  = () => setPage((p) => Math.max(0, p - 1))
+  const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
+  const goLast  = () => setPage(pageCount - 1)
 
   /* ---------------- groups lookup maps ---------------- */
-  const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
-  const groupByName = useMemo(() => Object.fromEntries(groups.map((g) => [g.name, g])), [groups])
+  const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
   const groupByNameLower = useMemo(
     () => Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g])),
     [groups]
@@ -106,20 +119,25 @@ export default function UsersTable({
     [groups]
   )
 
-  const resolveGroupFromValue = useCallback((value?: string | null): GroupWithCount | null => {
-    if (!value) return null
-    const raw = String(value).trim()
-    if (!raw) return null
-    if (UUID_V4.test(raw) && groupById[raw]) return groupById[raw]
-    if (groupByName[raw]) return groupByName[raw]
-    const lower = raw.toLowerCase()
-    if (groupByNameLower[lower]) return groupByNameLower[lower]
-    if (groupBySlug[raw]) return groupBySlug[raw]
-    const vSlug = slugify(raw)
-    if (groupBySlug[vSlug]) return groupBySlug[vSlug]
-    if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
-    return null
-  }, [groupById, groupByName, groupByNameLower, groupBySlug, groupBySlugifiedName])
+  /** Resolve a group for a row using id/name/slug from row or attributes (stable across refresh). */
+  const resolveGroupForRow = useCallback(
+    (row: UiUser): GroupWithCount | null => {
+      if (row.group_id && groupById[row.group_id]) return groupById[row.group_id]
+      const raw = getRawGroupValue(row)
+      if (!raw) return null
+      const v = raw.trim()
+      if (!v) return null
+      if (UUID_V4.test(v) && groupById[v]) return groupById[v]
+      const lower = v.toLowerCase()
+      if (groupByNameLower[lower]) return groupByNameLower[lower]
+      if (groupBySlug[v]) return groupBySlug[v]
+      const vSlug = slugify(v)
+      if (groupBySlug[vSlug]) return groupBySlug[vSlug]
+      if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
+      return null
+    },
+    [groupById, groupByNameLower, groupBySlug, groupBySlugifiedName]
+  )
 
   /* ---------------- persistent counts (seeded from DB) ---------------- */
   const [counts, setCounts] = useState<Record<string, number>>(
@@ -148,6 +166,7 @@ export default function UsersTable({
       return new Set([...p, ...onPageIds])
     })
 
+  /** Normalize demographics from a group (supports underscore or hyphen keys). */
   const extractDemographicAttrs = (g: GroupWithCount) => {
     const d = (g?.demographics || {}) as any
     return {
@@ -157,25 +176,37 @@ export default function UsersTable({
     }
   }
 
-  const postMembershipDeltas = async (deltas: Record<string, number>) => {
-    const changes = Object.entries(deltas)
-      .map(([id, delta]) => ({ id, delta }))
-      .filter((c) => c.delta !== 0)
-    if (!changes.length) return
+  /** Fetch DB memberships → annotate rows (so icons persist across refresh). */
+  const refreshMemberships = useCallback(async () => {
+    if (!accountId) return
     try {
-      await fetch("/api/groups/membership", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(accountId ? { "x-account-id": accountId } : {}),
-        },
-        body: JSON.stringify({ changes }),
+      const res = await fetch(`/api/group-memberships?accountId=${encodeURIComponent(accountId)}`, { cache: "no-store" })
+      if (!res.ok) return
+      const payload = await res.json() as {
+        ok: boolean,
+        byUserId: Record<string, { group_id: string, name: string, icon: string | null }>
+      }
+      if (!payload?.ok) return
+      const byUser = payload.byUserId || {}
+      startTransition(() => {
+        setRows(prev =>
+          prev.map(u => {
+            const m = byUser[u.user_id]
+            return m
+              ? { ...u, group_id: m.group_id, group_icon: m.icon, group_name: m.name }
+              : u
+          })
+        )
       })
     } catch (e) {
-      console.error("membership delta post failed", e)
+      // best-effort; no user-visible error
+      console.error("refreshMemberships failed", e)
     }
-  }
+  }, [accountId])
 
+  useEffect(() => { refreshMemberships() }, [refreshMemberships])
+
+  /** Compute and apply counts optimistically. Keys are group IDs. */
   const applyCountDeltasLocal = (deltas: Record<string, number>) => {
     if (!Object.keys(deltas).length) return
     setCounts((prev) => {
@@ -187,54 +218,90 @@ export default function UsersTable({
     })
   }
 
-  async function assignToGroup(targetGroupId: string, userIds: string[]) {
-    if (!userIds.length) return
-    const g = groupById[targetGroupId]; if (!g) return
+async function assignToGroup(targetGroupId: string, userIds: string[]) {
+  if (!userIds.length || !accountId) return
+  const g = groupById[targetGroupId]
+  if (!g) return
 
-    const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
-    const demo = extractDemographicAttrs(g)
-
-    setLoading(true); setError(null)
-    try {
-      await Promise.all(
-        userIds.map((uid) =>
-          updateUserAttributesAction(uid, { group: g.name, ...demo }),
-        ),
-      )
-      startTransition(() =>
-        setRows((prev) =>
-          prev.map((u) =>
-            userIds.includes(u.user_id)
-              ? { ...u, attributes: { ...u.attributes, group: g.name, ...demo } }
-              : u,
-          ),
-        ),
-      )
-
-      const oldIds = new Set<string>()
-      for (const u of rows) {
-        if (!userIds.includes(u.user_id)) continue
-        const old = resolveGroupFromValue(getRawGroupValue(u))
-        const oldId = old?.id
-        if (oldId && oldId !== targetGroupId) oldIds.add(oldId)
-      }
-      for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
-
-      applyCountDeltasLocal(deltas)
-      await postMembershipDeltas(deltas)
-      setSelected(new Set())
-    } catch (e: any) {
-      setError(e?.message ?? "Group assign failed")
-    } finally {
-      setLoading(false)
-    }
+  // Build deltas from CURRENT rows (old group -> -1, new group -> +N)
+  const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
+  const oldIds = new Set<string>()
+  for (const u of rows) {
+    if (!userIds.includes(u.user_id)) continue
+    const old = u.group_id
+    if (old && old !== targetGroupId) oldIds.add(old)
   }
+  for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
+
+  // Build payload compatible with BOTH old (changes-only) and new (assignments) API
+  const payload = {
+    accountId,
+    assignments: userIds.map((uid) => ({ user_id: uid, group_id: targetGroupId })),
+    changes: Object.entries(deltas).map(([id, delta]) => ({ id, delta })), // always non-empty (+N to target)
+  }
+
+  // Optional demographics you merge into Zephr attributes
+  const demo = extractDemographicAttrs(g)
+
+  setLoading(true); setError(null)
+  try {
+    // 1) Patch Zephr attributes (source of truth)
+    await Promise.all(
+      userIds.map((uid) =>
+        updateUserAttributesAction(uid, { group: g.name, ...demo })
+      )
+    )
+
+    // 2) Persist membership/counts on the server (works with old/new route)
+    const res = await fetch("/api/groups/membership", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json()
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || "Failed to persist membership")
+    }
+
+    // 3) Optimistic UI update (icon + name + attributes)
+    startTransition(() =>
+      setRows((prev) =>
+        prev.map((u) =>
+          userIds.includes(u.user_id)
+            ? {
+                ...u,
+                group_id: g.id,
+                group_icon: g.icon,
+                group_name: g.name,
+                attributes: { ...u.attributes, group: g.name, ...demo },
+              }
+            : u
+        )
+      )
+    )
+
+    // 4) Counts (apply server deltas if provided, else use our local deltas)
+    const serverDeltas: Record<string, number> | undefined = data?.deltas
+    applyCountDeltasLocal(serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas)
+
+    // 5) Re-hydrate from DB so icons persist after refresh
+    await refreshMemberships()
+
+    setSelected(new Set())
+  } catch (e: any) {
+    console.error(e)
+    setError(e?.message ?? "Group assign failed")
+  } finally {
+    setLoading(false)
+  }
+}
+
 
   async function applyGroup(targetGroupId: string) {
     await assignToGroup(targetGroupId, Array.from(selected))
   }
 
-  /* ------------ bulk template ------------- */
+  /* ---------------- templates bulk ---------------- */
   const fetchTemplateNames = async () =>
     (await fetch("/api/templates")).json() as Promise<string[]>
 
@@ -281,10 +348,10 @@ export default function UsersTable({
       const ids = selected.has(draggedId) ? Array.from(selected) : [draggedId]
       await assignToGroup(targetGroupId, ids)
     },
-    [selected, rows, groupById, accountId]
+    [selected, assignToGroup]
   )
 
-  /* ---------------- dynamic templates list ---------------- */
+  /* ---------------- misc helpers ---------------- */
   const DynamicTemplateOptions = () => {
     const [names, setNames] = useState<string[]>([])
     useEffect(() => { fetchTemplateNames().then(setNames).catch(console.error) }, [])
@@ -306,7 +373,7 @@ export default function UsersTable({
         await navigator.clipboard.writeText(email)
         setCopied(true)
         setTimeout(() => setCopied(false), 1200)
-      } catch { }
+      } catch {}
     }
     return (
       <button
@@ -321,37 +388,18 @@ export default function UsersTable({
     )
   }
 
-  /* -------- after modal save: update row + counts -------- */
-  const handleUserModalSaved = useCallback((payload: {
-    userId: string
-    oldGroupId?: string | null
-    newGroupId?: string | null
-    newAttributes?: Record<string, any>
-  }) => {
-    const { userId, oldGroupId, newGroupId, newAttributes } = payload
-
-    // Update the row locally
-    if (newAttributes) {
-      startTransition(() =>
-        setRows((prev) =>
-          prev.map((u) =>
-            u.user_id === userId
-              ? { ...u, attributes: { ...u.attributes, ...newAttributes } }
-              : u
-          )
-        )
-      )
-    }
-
-    // Adjust counts (both sides)
-    const deltas: Record<string, number> = {}
-    if (oldGroupId && oldGroupId !== newGroupId) deltas[oldGroupId] = (deltas[oldGroupId] ?? 0) - 1
-    if (newGroupId && oldGroupId !== newGroupId) deltas[newGroupId] = (deltas[newGroupId] ?? 0) + 1
-    if (Object.keys(deltas).length) {
-      applyCountDeltasLocal(deltas)
-      postMembershipDeltas(deltas)
-    }
-  }, [])
+  const GroupIconCell = ({ row }: { row: UiUser }) => {
+    const g = resolveGroupForRow(row)
+    if (!g && !row.group_icon) return <span className="text-[hsl(var(--muted-foreground))]">—</span>
+    const iconKey = (row.group_icon ?? g?.icon ?? "") as string
+    const icon = GROUP_ICON_EMOJI[iconKey] ?? "📁"
+    const title = g?.name ?? row.group_name ?? "Group"
+    return (
+      <span className="text-lg leading-none" title={title} aria-label={title}>
+        {icon}
+      </span>
+    )
+  }
 
   /* ---------------- UI ---------------- */
   return (
@@ -405,122 +453,113 @@ export default function UsersTable({
             </CardTitle>
           </CardHeader>
 
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <StrictRow className="border-line hover:bg-[hsl(var(--muted))]">
-                  <TableHead>
-                    <Checkbox
-                      checked={pagedRows.length > 0 && pagedRows.every((u) => selected.has(u.user_id))}
-                      onCheckedChange={toggleAllOnPage}
-                      className="rounded-none"
-                      aria-label="Select all on page"
-                    />
-                  </TableHead>
-                  <TableHead className="text-ink">User</TableHead>
-                  <TableHead className="text-ink">Email</TableHead>
-                  <TableHead className="text-ink">Role</TableHead>
-                  <TableHead className="text-ink">Actions</TableHead>
-                </StrictRow>
-              </TableHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <StrictRow className="border-line hover:bg-[hsl(var(--muted))]">
+                <TableHead>
+                  <Checkbox
+                    checked={pagedRows.length > 0 && pagedRows.every((u) => selected.has(u.user_id))}
+                    onCheckedChange={toggleAllOnPage}
+                    className="rounded-none"
+                    aria-label="Select all on page"
+                  />
+                </TableHead>
+                <TableHead className="text-ink">User</TableHead>
+                <TableHead className="text-ink">Email</TableHead>
+                <TableHead className="text-ink">Group</TableHead>
+                <TableHead className="text-ink">Role</TableHead>
+                <TableHead className="text-ink">Edit</TableHead>
+              </StrictRow>
+            </TableHeader>
 
-              <TableBody>
-                {pagedRows.map((u) => {
-                  const fn = u.attributes?.firstname || ""
-                  const ln = u.attributes?.lastname || u.attributes?.surname || ""
-                  const displayName = fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
+            <TableBody>
+              {pagedRows.map((u) => {
+                const fn = u.attributes?.firstname || ""
+                const ln = u.attributes?.lastname || u.attributes?.surname || ""
+                const displayName =
+                  fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
 
-                  return (
-                    <StrictRow
-                      key={u.user_id}
-                      className="border-line hover:bg-[hsl(var(--muted))]"
-                      draggable
-                      onDragStart={(e) => onDragStart(e as any, u.user_id)}
-                    >
-                      <TableCell>
-                        <Checkbox
-                          checked={selected.has(u.user_id)}
-                          onCheckedChange={() => toggle(u.user_id)}
-                          className="rounded-none"
-                          aria-label={`Select ${displayName}`}
-                        />
-                      </TableCell>
+                return (
+                  <StrictRow
+                    key={u.user_id}
+                    className="border-line hover:bg-[hsl(var(--muted))]"
+                    draggable
+                    onDragStart={(e) => onDragStart(e as any, u.user_id)}
+                  >
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(u.user_id)}
+                        onCheckedChange={() => toggle(u.user_id)}
+                        className="rounded-none"
+                        aria-label={`Select ${displayName}`}
+                      />
+                    </TableCell>
 
-                      <TableCell>
-                        <span className="font-medium text-ink">{displayName}</span>
-                      </TableCell>
+                    <TableCell className="font-medium text-ink">
+                      {displayName}
+                    </TableCell>
 
-                      <TableCell className="text-[hsl(var(--muted-foreground))]">
-                        <EmailCopy email={u.identifiers.email_address} />
-                      </TableCell>
+                    <TableCell className="text-[hsl(var(--muted-foreground))]">
+                      <EmailCopy email={u.identifiers.email_address} />
+                    </TableCell>
 
-                      <TableCell>
-                        {u.user_type === "owner" ? (
-                          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-                            <Crown className="h-3 w-3" /> Owner
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-                            <UserIcon className="h-3 w-3" /> User
-                          </Badge>
-                        )}
-                      </TableCell>
+                    <TableCell>
+                      <GroupIconCell row={u} />
+                    </TableCell>
 
-                      <TableCell>
-                        <UserEditButton
-                          userId={u.user_id}
-                          userEmail={u.identifiers.email_address}
-                          existingAttributes={u.attributes}
-                          groups={groups}
-                          onAfterSave={(payload: any) => {
-                            // Expecting payload.membershipDeltas?: Array<{ id: string; delta: number }>
-                            const deltas = payload?.membershipDeltas as { id: string; delta: number }[] | undefined
-                            if (!deltas || deltas.length === 0) return
+                    <TableCell>
+                      {u.user_type === "owner" ? (
+                        <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
+                          <Crown className="h-3 w-3" /> Owner
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
+                          <UserIcon className="h-3 w-3" /> User
+                        </Badge>
+                      )}
+                    </TableCell>
 
-                            // Optimistically update right-rail counts
-                            setCounts(prev => {
-                              const next = { ...prev }
-                              for (const { id, delta } of deltas) {
-                                next[id] = Math.max(0, (next[id] ?? 0) + delta)
-                              }
-                              return next
-                            })
-                          }}
-                        />
+                    <TableCell>
+                      <UserEditButton
+                        userId={u.user_id}
+                        userEmail={u.identifiers.email_address}
+                        existingAttributes={u.attributes}
+                        groups={groups}
+                      />
+                    </TableCell>
+                  </StrictRow>
+                )
+              })}
+            </TableBody>
+          </Table>
 
-                      </TableCell>
-                    </StrictRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-
-            {pageCount > 1 && (
-              <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
-                <span>Page {page + 1} / {pageCount}</span>
-                <div className="flex items-center gap-1">
-                  <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronLeft className="h-4 w-4" />
-                    <ChevronLeft className="h-4 w-4 -ml-2" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={goPrev} disabled={page === 0}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={goNext} disabled={page === pageCount - 1}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={goLast} disabled={page === pageCount - 1}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronRight className="h-4 w-4" />
-                    <ChevronRight className="h-4 w-4 -ml-2" />
-                  </Button>
-                </div>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
+              <span>Page {page + 1} / {pageCount}</span>
+              <div className="flex items-center gap-1">
+                <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronLeft className="h-4 w-4 -ml-2" />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={goPrev} disabled={page === 0}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={goNext} disabled={page === pageCount - 1}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={goLast} disabled={page === pageCount - 1}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4 -ml-2" />
+                </Button>
               </div>
-            )}
-          </CardContent>
+            </div>
+          )}
+        </CardContent>
         </Card>
 
         {/* GROUP FOLDERS */}
@@ -537,7 +576,7 @@ export default function UsersTable({
             <Card
               key={g.id}
               onDragOver={onDragOver}
-              onDrop={(e) => onDrop(e as any, g.id)}
+              onDrop={(e) => onDrop(e, g.id)}
               className="cursor-pointer rounded-none border border-line bg-paper transition-colors hover:bg-[hsl(var(--muted))]"
               title={`Drop users to assign to ${g.name}`}
             >

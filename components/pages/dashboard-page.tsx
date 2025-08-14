@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import {
   LayoutDashboard,
   Users,
@@ -12,7 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
+import SyncUsersButton from "@/components/sync-users-button";
 import {
   getCurrentUser,
   getUsersForCurrentAccount,
@@ -31,6 +30,7 @@ export async function DashboardPage() {
   /* ---------- who / where ---------- */
   const session = await getCurrentUser();
   const acct = session?.activeAccount;
+
   if (!acct) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -43,6 +43,8 @@ export async function DashboardPage() {
       </div>
     );
   }
+
+  const accountId = (acct as any)?.account_id ?? (acct as any)?.id ?? "";
 
   /* ---------- users / products ---------- */
   let users: any[] = [];
@@ -62,9 +64,6 @@ export async function DashboardPage() {
   else productsError = productsRes.reason?.message ?? "Failed to load products";
 
   /* ---------- templates (defaults + custom blobs) ---------- */
-  const cookieStore = await cookies();
-  const accountId = cookieStore.get("active_account_id")?.value;
-
   let customTemplates: any[] = [];
   let templateErr: string | null = null;
 
@@ -114,20 +113,32 @@ export async function DashboardPage() {
     ts: new Date((t as any).createdAt || (t as any).uploadedAt || 0).getTime(),
   }));
 
-  const recentFeed = takeRecent([...recentUsers, ...recentProducts, ...recentTemplates], 10);
+  const recentFeed = takeRecent(
+    [...recentUsers, ...recentProducts, ...recentTemplates],
+    10
+  );
 
   /* ---------- render ---------- */
   return (
     <div className="space-y-6">
-      {/* header */}
-      <div>
-        <h1 className="flex items-center gap-2 font-serif text-3xl text-ink">
-          <LayoutDashboard className="h-8 w-8" aria-hidden="true" />
-          Dashboard
-        </h1>
-        <p className="mt-1 text-[hsl(var(--muted-foreground))]">
-          Overview for <span className="text-ink">{acct.name}</span>
-        </p>
+      {/* header + actions */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 font-serif text-3xl text-ink">
+            <LayoutDashboard className="h-8 w-8" aria-hidden="true" />
+            Dashboard
+          </h1>
+          <p className="mt-1 text-[hsl(var(--muted-foreground))]">
+            Overview for <span className="text-ink">{acct.name}</span>
+          </p>
+        </div>
+
+        {/* show sync only for admins & when we know the account */}
+        {session?.isAdmin && accountId && (
+          <div className="flex items-center gap-2">
+            <SyncUsersButton accountId={accountId} />
+          </div>
+        )}
       </div>
 
       {/* stats */}
@@ -268,7 +279,7 @@ export async function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* templates overview list (first 3) */}
+        {/* templates overview list (first 5) */}
         <Card className="rounded-none border border-line bg-paper">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 font-serif text-ink">

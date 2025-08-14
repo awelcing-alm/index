@@ -40,7 +40,7 @@ export function Sidebar() {
     >
       <div className="flex items-center justify-between px-3 py-3">
         {!isCollapsed && (
-          <h1 className="font-serif text-2xl text-ink">Zephr</h1>
+          <h1 className="font-serif text-2xl text-ink">Indecks</h1>
         )}
         <Button
           variant="ghost"

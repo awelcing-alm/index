@@ -18,7 +18,7 @@ const sans = Source_Sans_3({
 });
 
 export const metadata: Metadata = {
-  title: "ZINDEX",
+  title: "InDecks",
   description: "Account Management for the modern KM.",
   generator: "almaw",
 };

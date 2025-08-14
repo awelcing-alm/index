@@ -27,7 +27,7 @@ export default async function LoginPage() {
               <div className="mx-auto mb-4 grid size-12 place-items-center rounded-none border border-line bg-[hsl(var(--muted))] text-ink">
                 <span className="font-serif text-lg">Z</span>
               </div>
-              <h1 className="font-serif text-2xl text-ink">Index</h1>
+              <h1 className="font-serif text-2xl text-ink">InDecks</h1>
               <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
                 Admin Portal
               </p>

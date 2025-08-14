@@ -1,242 +1,374 @@
 # Zephr Admin Application
 
-This application provides a comprehensive interface for managing Zephr accounts, users, and products using the Zephr Admin API.
+A fast, admin-first control panel for Zephr accounts, users, groups, and product access. This README blends product context, architecture, and hands‑on implementation detail so engineers and stakeholders can move in lockstep.
 
-## Environment Variables
+---
 
-The following environment variables are required:
+## Executive Summary
 
-- `ZEPHR_BASE_URL` - The base URL for the Zephr Admin API (e.g., `https://alm.api.zephr.com`)
-- `ZEPHR_PUBLIC_BASE_URL` - The public base URL for Zephr (e.g., `alm-lawcom-live.non-prod.cdn.zephr.com`)
-- `ZEPHR_ACCESS_KEY` - Your Zephr API access key
-- `ZEPHR_SECRET_KEY` - Your Zephr API secret key
+**Who it’s for:** Customer admins who manage large rosters (hundreds → tens of thousands of users) and their access to products.
 
-## API Usage Guide
+**What it does:**
+- Lists account users instantly (cached + paginated), with quick search and attribute filtering
+- Edits user attributes (first/last name, org, country, job area/function, etc.)
+- Assigns users to **Groups** with optional demographic defaults
+- Surfaces **Product Grants** per account
+- Keeps a **local Postgres mirror** in sync with Zephr for speed, reliability, and reporting
 
-### Account Products Lookup
+**Why it matters:** Admins should feel the UI is instantaneous even when Zephr APIs are busy, rate‑limited, or paginating. We achieve that by mirroring the minimum viable dataset in Postgres and reconciling in the background while persisting an audit trail.
 
-To show which products are added to an account, the application uses a 3-step process:
+---
 
-#### Step 1: Get Account Grants
-\`\`\`
-GET /v3/accounts/{accountId}/grants
-\`\`\`
+## Table of Contents
 
-This endpoint returns all grants associated with an account. Each grant contains:
-- `grantId` - Unique identifier for the grant
-- `entitlement_type` - Type of entitlement (bundle, entitlement, meter, credits)
-- `entitlement_id` - ID of the specific entitlement
-- `product_id` - ID of the product associated with this grant
-- `startTime` / `endTime` - Grant validity period
-- `expiry_state` - Current state (active, pending, expired)
+1. [Environment & Secrets](#environment--secrets)
+2. [Personas, Goals, KPIs](#personas-goals-kpis)
+3. [Architecture Overview](#architecture-overview)
+4. [Data Model (Postgres)](#data-model-postgres)
+5. [Zephr Admin API Usage](#zephr-admin-api-usage)
+6. [Performance Plan (Next.js + DB)](#performance-plan-nextjs--db)
+7. [User & Group Workflows](#user--group-workflows)
+8. [Local Development](#local-development)
+9. [Operational Runbook](#operational-runbook)
+10. [Security & Compliance](#security--compliance)
+11. [Testing Strategy](#testing-strategy)
+12. [Roadmap & Backlog](#roadmap--backlog)
 
-#### Step 2: Get Product Details (Optional)
-\`\`\`
-GET /v3/products/{productId}
-\`\`\`
+---
 
-For each `product_id` found in the grants, fetch detailed product information:
-- `label` - Human-readable product name
-- `description` - Product description
-- `entitlement` - Associated entitlement details
-- `sharingLimit` - Number of users who can share this product
+## Environment & Secrets
 
-#### Step 3: Get Entitlement Details (Optional)
-\`\`\`
-GET /v3/entitlements/{entitlementId}
-\`\`\`
+Required app configuration:
 
-For additional context, fetch entitlement details:
-- `label` - Entitlement name
-- `description` - Entitlement description
-- `auto_assign` - Assignment behavior
+```
+# Zephr Admin API
+ZEPHR_BASE_URL=https://alm.api.zephr.com
+ZEPHR_PUBLIC_BASE_URL=alm-lawcom-live.non-prod.cdn.zephr.com
+ZEPHR_ACCESS_KEY=...
+ZEPHR_SECRET_KEY=...
 
-#### Implementation Example
+# Database (pg)
+DATABASE_URL=postgres://user:pass@host:5432/db
 
-The `getProductsByAccount()` function in `lib/zephr-api.ts` demonstrates this pattern:
+# Cron/Tasks
+CRON_SECRET=some-long-random
 
-\`\`\`typescript
-export async function getProductsByAccount(accountId: string): Promise<ZephrProductWithGrant[]> {
-  // Step 1: Get account grants
-  const accountGrantsResponse = await adminApiCall(`/v3/accounts/${accountId}/grants`)
-  const accountGrants = accountGrantsResponse.results || accountGrantsResponse
-  
-  const productsWithGrants: ZephrProductWithGrant[] = []
-  
-  for (const grant of accountGrants) {
-    // Create base product from grant data
-    const productWithGrant = {
-      id: grant.product_id || grant.entitlement_id,
-      label: grant.entitlement_id?.replace(/-/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
-      grantId: grant.grantId,
-      startTime: grant.startTime,
-      endTime: grant.endTime,
-      expiry_state: grant.expiry_state
-    }
-    
-    // Step 2: Enhance with product details (if available)
-    if (grant.product_id) {
-      try {
-        const productDetails = await adminApiCall(`/v3/products/${grant.product_id}`)
-        if (productDetails?.label) {
-          productWithGrant.label = productDetails.label
-          productWithGrant.description = productDetails.description
-        }
-      } catch (error) {
-        // Continue with grant-based info if product fetch fails
-      }
-    }
-    
-    productsWithGrants.push(productWithGrant)
-  }
-  
-  return productsWithGrants
-}
-\`\`\`
+# Next.js
+NODE_ENV=development
+```
 
-### User Attributes Lookup and Editing
+> **Auth:** All Zephr requests are HMAC‑SHA256 signed. We centralize signing in `lib/api-client.ts`.
 
-To show which user attributes a user already has and enable editing, use these endpoints:
+---
 
-#### Get User Details
-\`\`\`
-GET /v3/users/{userId}
-\`\`\`
+## Personas, Goals, KPIs
 
-This returns the complete user object including:
-- `user_id` - Unique user identifier
-- `identifiers` - User identifiers (email, username)
-- `attributes` - All user attributes with current values
-- `email_verified` - Email verification status
+**Primary Persona:** Account Administrator (non‑technical, time‑sensitive)
 
-#### Get Account Users (Alternative)
-\`\`\`
-GET /v3/accounts/{accountId}/users
-\`\`\`
+**Top Goals**
+- Load Users page instantly (≤ 300ms interactive on cached data)
+- Assign users to a group with visual confirmation in < 1s
+- Search/filter users across large accounts < 250ms p95
 
-This returns all users in an account with their attributes. Each user object includes:
-- `user_id` - User identifier
-- `user_email` - User's email address
-- `attributes` - User attributes object
+**KPIs**
+- **p95 Users page TTFB:** < 200ms (server cached + SSR streaming)
+- **p95 Group assign latency (UI):** < 1s (optimistic update + background persist)
+- **Sync lag tolerance:** ≤ 1 min for eventual consistency with Zephr
+- **Error budget:** < 0.1% failed admin interactions/month
 
-#### Update User Attributes
-\`\`\`
-PATCH /v3/users/{userId}/attributes
-\`\`\`
+---
 
-Updates specific user attributes while leaving others unchanged. Send a JSON object with the attributes to update:
+## Architecture Overview
 
-\`\`\`json
-{
-  "firstname": "George",
-  "lastname": "Smith",
-  "organization": "ACME Corp",
-  "job-area": "In-House Counsel"
-}
-\`\`\`
+**Next.js (App Router, Server Components + Actions)**
+- SSR lists and details from Postgres for speed & stability
+- Server Actions call Zephr for mutations (PATCH) and then reconcile DB
 
-#### Supported User Attributes
+**Postgres Mirror**
+- Mirrors the subset of Zephr entities we need for fast UI & reporting
+- Tracks group membership and counts without scanning user lists
 
-Based on the Zephr user schema, the following attributes are supported:
+**Background Sync (Cron)**
+- Scheduled reconciler fetches authoritative data from Zephr and upserts into Postgres (idempotent)
+- UI posts lightweight membership deltas for live accuracy between sync cycles
 
-**Core Profile Attributes:**
-- `firstname` - First name
-- `lastname` - Last name  
-- `organization` - Organization name
-- `address` - Street address
-- `city` - City
-- `country` - Country (US, UK, etc.)
-- `state` - State/Province (AK, AL, CA, CO, NJ, NY, etc.)
-- `phone` - Phone number
-- `zip-code` - Postal/ZIP code
+**Caching**
+- RSC/route segment caching for list pages
+- In‑process LRU for small reference data (groups, templates)
 
-**Professional Attributes:**
-- `job-area` - Job area (In-House Counsel, Technology Executive, Law Firm, etc.)
-- `job-function` - Job function (General Counsel, Associate, CEO, Student, etc.)
-- `area-of-practice` - Practice area (Admiralty/Aviation/Transportation, Aerospace and Defense, etc.)
+Diagram (text):
 
-#### Implementation Example
+```
+Admin → Next.js (SSR/RSC) → Postgres (mirror)
+                 ↓ mutate
+             Server Actions → Zephr Admin API
+                 ↑ reconcile
+        Background Sync (cron task)
+```
 
-The user edit functionality demonstrates the complete flow:
+---
 
-1. **Fetch existing attributes** using `GET /v3/users/{userId}` or from account users list
-2. **Display current values** in the edit form, showing "George" in the firstname field
-3. **Allow editing** - user changes "George" to "Borge"
-4. **Update via PATCH** - send only the changed attributes:
+## Data Model (Postgres)
 
-\`\`\`typescript
-const updateUserAttributes = async (userId: string, attributes: Record<string, any>) => {
-  const response = await adminApiCall(`/v3/users/${userId}/attributes`, {
-    method: "PATCH",
-    body: JSON.stringify(attributes)
-  })
-  
-  // Returns 200 OK or 204 No Content on success
-  return response
-}
+_Schema focus: fast reads, simple reconciliation, auditable membership changes._
 
-// Example usage - changing firstname from "George" to "Borge"
-await updateUserAttributes("user-123", {
-  firstname: "Borge"
-})
-\`\`\`
+```
+-- Accounts
+accounts(
+  id uuid primary key,
+  slug text unique,
+  name text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
 
-### Error Handling
+-- Users (global identity across accounts)
+users(
+  id uuid primary key, -- zephr user_id
+  email text not null unique,
+  attributes jsonb not null default '{}',
+  created_at timestamptz,
+  updated_at timestamptz
+);
 
-The API uses standard HTTP status codes:
+-- Many-to-many: which users belong to which account
+account_users(
+  account_id uuid references accounts(id) on delete cascade,
+  user_id uuid references users(id) on delete cascade,
+  user_type text,
+  primary key (account_id, user_id),
+  created_at timestamptz default now()
+);
 
-- `200 OK` - Successful request
-- `201 Created` - Resource created successfully  
-- `204 No Content` - Successful update with no response body
-- `400 Bad Request` - Invalid request parameters
-- `401 Unauthorized` - Authentication failed
-- `403 Forbidden` - Insufficient permissions
-- `404 Not Found` - Resource not found
-- `409 Conflict` - Resource conflict (e.g., duplicate email)
+-- Groups (as defined in app)
+groups(
+  id uuid primary key,
+  account_id uuid references accounts(id) on delete cascade,
+  slug text not null,
+  name text not null,
+  color text,
+  icon text,
+  default_template text,
+  product_grant_ids text[] not null default '{}',
+  demographics jsonb not null default '{}',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(account_id, slug)
+);
 
-### Authentication
+-- Memberships (single-group model: at most one active per user/account)
+group_memberships(
+  account_id uuid not null,
+  group_id uuid not null references groups(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  assigned_by text,
+  assigned_at timestamptz default now(),
+  primary key (account_id, user_id)
+);
 
-All API requests must be signed using HMAC-SHA256. The application handles this automatically using the configured access and secret keys. The signing process follows this pattern:
+-- Optimized counts (denormalized for UI)
+-- We maintain via small write-deltas from the UI + periodic reconciliation.
+-- Alternatively implement as a materialized view if consistency > write-speed.
 
-1. Create a hash using: `secretKey + body + path + query + method + timestamp + nonce`
-2. Generate signature as hex-encoded SHA256 hash
-3. Include in Authorization header: `ZEPHR-HMAC-SHA256 accessKey:timestamp:nonce:signature`
+-- Optional audit log
+audit_events(
+  id bigserial primary key,
+  at timestamptz default now(),
+  actor text,
+  kind text, -- e.g., "user.update", "group.assign"
+  account_id uuid,
+  user_id uuid,
+  group_id uuid,
+  payload jsonb
+);
+```
 
-### Rate Limiting and Pagination
+**Indexes (critical)**
+- `users(email)`
+- `account_users(account_id, user_id)`
+- `group_memberships(account_id, group_id)` and `group_memberships(account_id, user_id)`
+- Trigram index on `users.email` for fast search (optional): `CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE INDEX users_email_trgm ON users USING gin (email gin_trgm_ops);`
 
-- Most list endpoints support pagination via `page` and `rpp` (results per page) parameters
-- Default page size is typically 10-50 items
-- Use the `total` field in responses to determine total available items
-- For large datasets, implement pagination to avoid timeouts
+---
 
-### Best Practices
+## Zephr Admin API Usage
 
-1. **Cache product and entitlement details** to reduce API calls
-2. **Handle missing data gracefully** - not all grants may have complete product information
-3. **Validate attribute values** before sending updates
-4. **Use batch operations** when updating multiple users
-5. **Implement retry logic** for transient failures
-6. **Log API interactions** for debugging and monitoring
+**Users (read list)**
+- `GET /v3/accounts/{accountId}/users` → seed/update `users` + `account_users`
 
-## Application Features
+**User (read details)**
+- `GET /v3/users/{userId}` → hydrate full `attributes` in `users.attributes`
 
-- **Account Management** - View and manage Zephr accounts
-- **User Management** - List, view, and edit user profiles and attributes
-- **Product Subscriptions** - View account-specific product grants and subscriptions
-- **Authentication** - Secure login with session management
-- **Responsive Design** - Works on desktop and mobile devices
+**User (update attributes)**
+- `PATCH /v3/users/{userId}/attributes` (JSON body of changed fields)
 
-## Development
+**Grants → Products (per account)**
+- `GET /v3/accounts/{accountId}/grants` → show account products; optionally enrich via `GET /v3/products/{productId}`
 
-The application is built with:
-- Next.js 15 with App Router
-- TypeScript for type safety
-- Tailwind CSS for styling
-- shadcn/ui components
-- Server Actions for API interactions
+> We centralize Zephr calls and HMAC signing in `lib/api-client.ts`. Server Actions wrap these calls to keep secrets server-side.
 
-To run locally:
-1. Set up environment variables
-2. Install dependencies: `npm install`
-3. Run development server: `npm run dev`
-4. Open http://localhost:3000
+---
+
+## Performance Plan (Next.js + DB)
+
+**Server-first rendering**
+- Users list is **SSR from Postgres** with pagination. Data arrives immediately; Zephr calls do not block UI.
+- **RSC streaming** ensures first paint while heavier sections (e.g., products) complete.
+
+**Optimistic UI**
+- When assigning a group, we update the row(s) and the **right-rail group counts** instantly, then fire:
+  1) `PATCH /v3/users/{id}/attributes` to Zephr
+  2) `POST /api/groups/membership` to persist count deltas & membership in DB
+
+**Caching**
+- In-memory LRU for `groups` and template names
+- Route segment cache with short TTL for Users page (e.g., 15–30s) with tag invalidation on mutations
+
+**DB tuning**
+- Proper composite indexes (see above)
+- Avoid N+1: single query to fetch users for account + counts per group
+- Use `LIMIT/OFFSET` for pagination; consider keyset pagination later for very large datasets
+
+**Search & Filtering**
+- Server-driven search with indexed columns (email, job-area/function). For fuzzy email search, enable `pg_trgm`.
+- Debounced client input → `/api/users/search` (SSR-compatible) returning results under 250ms p95 on indexed fields.
+
+---
+
+## User & Group Workflows
+
+**Edit User (modal)**
+1. Open modal → fetch authoritative details via `GET /v3/users/{userId}` (server action)
+2. Pre-fill attributes from Postgres; overlay Zephr response for any drift
+3. Save → `PATCH /v3/users/{userId}/attributes`
+4. If `group` changed: update `group_memberships`, adjust **both** old & new group counts, then reconcile
+
+**Assign to Group (drag/drop or bulk apply)**
+- Client computes membership **deltas** (e.g., `+25` to target, `-25` from old if moving)
+- Posts deltas to `/api/groups/membership` for DB update
+- Issues Zephr attribute patch with demographic defaults from the group (country, job-area, job-function if set)
+
+**Apply Template**
+- Templates are attribute sets (default + custom) stored server-side
+- Applying a template merges into edited attributes before save; success toast displays only **after** a successful Zephr PATCH
+
+---
+
+## Local Development
+
+**Prereqs**
+- Node 20+
+- Postgres 14+ (local or Neon)
+
+**Install & run**
+```
+npm install
+npm run dev
+# open http://localhost:3000
+```
+
+**Database**
+- Run SQL from `/lib/db/migrations/*.sql` (or the provided Prisma/SQL scripts if present)
+- Seed minimal data: accounts, groups
+
+**Key folders**
+```
+app/
+  api/                # API routes (membership deltas, search, templates)
+  (pages)/            # RSC/SSR pages
+components/
+  pages/users-table.tsx
+  user-edit-button.tsx
+  user-edit-modal.tsx
+lib/
+  api-client.ts       # HMAC Zephr client
+  user-api.ts         # Zephr user helpers (get details, update, list by account)
+  user-actions.ts     # Server Actions that wrap user mutations
+  groups.ts           # Group CRUD (Postgres)
+  db.ts               # pg client
+  search.ts           # server-side search helpers
+```
+
+---
+
+## Operational Runbook
+
+**Sync Job (cron)**
+- `GET /v3/accounts/{accountId}/users` → upsert `users` & `account_users`
+- Recompute `group_memberships` by resolving `attributes.group` to our known group IDs (case/slug/ID tolerant)
+- Refresh group counts from memberships (authoritative backfill)
+- Log reconciliation stats in `audit_events`
+
+**On Mutation**
+- Server Action updates Zephr first; on success we:
+  - Apply local **membership delta** (old → new) for counts
+  - Upsert user attributes into `users`
+  - Invalidate caches via Next.js `revalidateTag("users:{accountId}")`
+
+**Monitoring**
+- Track: API error rates, p95 latencies, queue lengths, sync lag
+- Alerts on: sustained 4xx/5xx to Zephr, DB connection spikes, sync drift > 5 minutes
+
+---
+
+## Security & Compliance
+
+- HMAC signing kept server-side; **no admin secrets in the browser**
+- Principle of least privilege on DB roles
+- PII: limit columns and logs; avoid dumping raw attributes in debug logs in production
+- Rotate Zephr keys regularly
+
+---
+
+## Testing Strategy
+
+- **Unit:** signing, group resolution, membership deltas
+- **Integration:** Users list SSR path → DB → cache; attribute PATCH happy path & failure fallbacks
+- **E2E (Playwright):** open Users, search, drag to group, confirm counts update immediately, refresh page → counts persist
+- **Load test:** search endpoint and users list pagination with 50k users
+
+---
+
+## Roadmap & Backlog
+
+**Near-term (now → 2 sprints)**
+- ✅ Server-first SSR of Users list from Postgres
+- ✅ Optimistic group assign with immediate count updates
+- ✅ Template application merged into user edit flow
+- Debounced server search with indexed fields and cached results
+- Bulk operations progress UI (batched PATCH with retry)
+- Sync job metrics page (drift, last-run, durations)
+
+**Mid-term**
+- Advanced filters (country, job-area/function, org) with persisted views
+- Keyset pagination for super-large accounts
+- Partial revalidation (tagged RSC cache) on user updates
+- Product grants panel caching & background hydration
+
+**Templates (Backlog)**
+- Keep current single `groups.default_template` behavior
+- Later split into dedicated tables:
+  - `templates` (base)
+  - `radar_templates`  
+  - `mylaw_templates`  
+  - `scholar_templates`
+- UI: namespace selector + preview/apply
+
+**Longer-term**
+- Webhook ingestion (if/when available) to reduce sync polling
+- Edge function candidates for ultra‑low‑latency reads (optional)
+- Per‑account analytics (active users, engagement proxies)
+
+---
+
+## Contributing
+
+- Use conventional commits
+- Include before/after metrics for any performance PR
+- Add/adjust indexes with a migration and a rollback plan
+
+---
+
+## License
+
+Copyright reserved.

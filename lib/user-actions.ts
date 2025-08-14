@@ -1,34 +1,41 @@
+// lib/user-actions.ts
 "use server"
 
-import type { ZephrUser } from "@/lib/zephr-types"
-import { getUserDetails, updateUserAttributes } from "@/lib/user-api"
+import "server-only"
+import { adminApiCall } from "./api-client"
+
+export type UpdateUserResult =
+  | { success: true }
+  | { success: false; error: string }
 
 /**
- * Fetch a single user with full attributes (Admin API).
- * Thin server-action wrapper around lib/user-api.ts for UI components to call.
- */
-export async function getUserDetailsAction(userId: string): Promise<ZephrUser> {
-  try {
-    return await getUserDetails(userId)
-  } catch (err: any) {
-    // Re-throw a clean message so client components show a helpful error
-    throw new Error(err?.message || "Failed to fetch user details")
-  }
-}
-
-/**
- * Patch attributes for a user (Admin API).
- * Uses the correct endpoint: /v3/users/{id}/attributes with a plain attributes object.
+ * Patch Zephr user attributes.
+ * Uses the correct endpoint: /v3/users/:id/attributes (PATCH)
  */
 export async function updateUserAttributesAction(
   userId: string,
   attributes: Record<string, any>
-): Promise<{ success: true }> {
+): Promise<UpdateUserResult> {
   try {
-    await updateUserAttributes(userId, attributes)
-    return { success: true as const }
+    if (!userId) {
+      return { success: false, error: "Missing userId" }
+    }
+    if (!attributes || typeof attributes !== "object") {
+      return { success: false, error: "Invalid attributes payload" }
+    }
+
+    // Zephr expects the raw attributes object at this endpoint.
+    await adminApiCall(`/v3/users/${encodeURIComponent(userId)}/attributes`, {
+      method: "PATCH",
+      body: JSON.stringify(attributes),
+      headers: { "Content-Type": "application/json" },
+    })
+
+    return { success: true }
   } catch (err: any) {
-    // Let callers catch and display; throw so UI paths that rely on try/catch keep working
-    throw new Error(err?.message || "Failed to update user attributes")
+    const msg =
+      err?.message ??
+      (typeof err === "string" ? err : "Failed to update user attributes")
+    return { success: false, error: msg }
   }
 }

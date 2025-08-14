@@ -55,22 +55,12 @@ const StrictRow = ({
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-/** Extract any plausible stored value for the user's group from Zephr payloads. */
 function getRawGroupValue(u: any): string | null {
   const a = u?.attributes ?? {}
-
   const candidates: unknown[] = [
-    a.group,
-    a.Group,
-    a["group-name"],
-    a["group_name"],
-    a["group-id"],
-    a["group_id"],
-    a["group-slug"],
-    a["group_slug"],
-    u.group,
+    a.group, a.Group, a["group-name"], a["group_name"],
+    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"], u.group,
   ]
-
   for (const c of candidates) {
     if (!c) continue
     if (typeof c === "string") return c.trim()
@@ -78,7 +68,6 @@ function getRawGroupValue(u: any): string | null {
       return (c as any).value.trim()
     }
   }
-
   return null
 }
 
@@ -117,22 +106,18 @@ export default function UsersTable({
     [groups]
   )
 
-  /** Resolve a stored value (id/name/slug/messy) to a known group. */
   const resolveGroupFromValue = useCallback((value?: string | null): GroupWithCount | null => {
     if (!value) return null
     const raw = String(value).trim()
     if (!raw) return null
-
-    if (UUID_V4.test(raw) && groupById[raw]) return groupById[raw]          // id
-    if (groupByName[raw]) return groupByName[raw]                            // exact name
+    if (UUID_V4.test(raw) && groupById[raw]) return groupById[raw]
+    if (groupByName[raw]) return groupByName[raw]
     const lower = raw.toLowerCase()
-    if (groupByNameLower[lower]) return groupByNameLower[lower]              // case-insensitive name
-    if (groupBySlug[raw]) return groupBySlug[raw]                            // exact slug
-
-    const vSlug = slugify(raw)                                               // slugify fallback
+    if (groupByNameLower[lower]) return groupByNameLower[lower]
+    if (groupBySlug[raw]) return groupBySlug[raw]
+    const vSlug = slugify(raw)
     if (groupBySlug[vSlug]) return groupBySlug[vSlug]
     if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
-
     return null
   }, [groupById, groupByName, groupByNameLower, groupBySlug, groupBySlugifiedName])
 
@@ -163,7 +148,6 @@ export default function UsersTable({
       return new Set([...p, ...onPageIds])
     })
 
-  /** Normalize demographics from a group (supports underscore or hyphen keys). */
   const extractDemographicAttrs = (g: GroupWithCount) => {
     const d = (g?.demographics || {}) as any
     return {
@@ -173,12 +157,10 @@ export default function UsersTable({
     }
   }
 
-  /** Post membership deltas to server (persists DB counters). */
   const postMembershipDeltas = async (deltas: Record<string, number>) => {
     const changes = Object.entries(deltas)
       .map(([id, delta]) => ({ id, delta }))
       .filter((c) => c.delta !== 0)
-
     if (!changes.length) return
     try {
       await fetch("/api/groups/membership", {
@@ -194,7 +176,6 @@ export default function UsersTable({
     }
   }
 
-  /** Compute and apply counts optimistically. Keys are group IDs. */
   const applyCountDeltasLocal = (deltas: Record<string, number>) => {
     if (!Object.keys(deltas).length) return
     setCounts((prev) => {
@@ -215,14 +196,11 @@ export default function UsersTable({
 
     setLoading(true); setError(null)
     try {
-      // Update Zephr user attributes
       await Promise.all(
         userIds.map((uid) =>
           updateUserAttributesAction(uid, { group: g.name, ...demo }),
         ),
       )
-
-      // Update local rows immediately
       startTransition(() =>
         setRows((prev) =>
           prev.map((u) =>
@@ -233,7 +211,6 @@ export default function UsersTable({
         ),
       )
 
-      // Decrement old groups (based on pre-update values we still have in `rows`)
       const oldIds = new Set<string>()
       for (const u of rows) {
         if (!userIds.includes(u.user_id)) continue
@@ -241,13 +218,10 @@ export default function UsersTable({
         const oldId = old?.id
         if (oldId && oldId !== targetGroupId) oldIds.add(oldId)
       }
-      for (const id of oldIds) {
-        deltas[id] = (deltas[id] ?? 0) - 1
-      }
+      for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
 
       applyCountDeltasLocal(deltas)
       await postMembershipDeltas(deltas)
-
       setSelected(new Set())
     } catch (e: any) {
       setError(e?.message ?? "Group assign failed")
@@ -260,7 +234,7 @@ export default function UsersTable({
     await assignToGroup(targetGroupId, Array.from(selected))
   }
 
-  /* ---------------- templates bulk ---------------- */
+  /* ------------ bulk template ------------- */
   const fetchTemplateNames = async () =>
     (await fetch("/api/templates")).json() as Promise<string[]>
 
@@ -310,7 +284,7 @@ export default function UsersTable({
     [selected, rows, groupById, accountId]
   )
 
-  /* ---------------- misc helpers ---------------- */
+  /* ---------------- dynamic templates list ---------------- */
   const DynamicTemplateOptions = () => {
     const [names, setNames] = useState<string[]>([])
     useEffect(() => { fetchTemplateNames().then(setNames).catch(console.error) }, [])
@@ -346,6 +320,38 @@ export default function UsersTable({
       </button>
     )
   }
+
+  /* -------- after modal save: update row + counts -------- */
+  const handleUserModalSaved = useCallback((payload: {
+    userId: string
+    oldGroupId?: string | null
+    newGroupId?: string | null
+    newAttributes?: Record<string, any>
+  }) => {
+    const { userId, oldGroupId, newGroupId, newAttributes } = payload
+
+    // Update the row locally
+    if (newAttributes) {
+      startTransition(() =>
+        setRows((prev) =>
+          prev.map((u) =>
+            u.user_id === userId
+              ? { ...u, attributes: { ...u.attributes, ...newAttributes } }
+              : u
+          )
+        )
+      )
+    }
+
+    // Adjust counts (both sides)
+    const deltas: Record<string, number> = {}
+    if (oldGroupId && oldGroupId !== newGroupId) deltas[oldGroupId] = (deltas[oldGroupId] ?? 0) - 1
+    if (newGroupId && oldGroupId !== newGroupId) deltas[newGroupId] = (deltas[newGroupId] ?? 0) + 1
+    if (Object.keys(deltas).length) {
+      applyCountDeltasLocal(deltas)
+      postMembershipDeltas(deltas)
+    }
+  }, [])
 
   /* ---------------- UI ---------------- */
   return (
@@ -466,6 +472,7 @@ export default function UsersTable({
                           userEmail={u.identifiers.email_address}
                           existingAttributes={u.attributes}
                           groups={groups}
+                          onAfterSave={handleUserModalSaved}
                         />
                       </TableCell>
                     </StrictRow>

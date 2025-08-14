@@ -1,45 +1,39 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useEffect, useMemo, useState } from "react"
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Card, CardContent, CardHeader, CardTitle,
+} from "@/components/ui/card"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Loader2, User as UserIcon, Save, AlertTriangle, Info, FileText } from "lucide-react"
+import {
+  Loader2, Users as UsersIcon, Save, AlertTriangle, Info,
+} from "lucide-react"
 
-import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
-import { updateUserAttributesAction, getUserDetailsAction } from "@/lib/user-actions"
-import type { ZephrUser } from "@/lib/zephr-types"
 import type { Group } from "@/lib/groups"
+import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
+import { updateUserAttributesAction } from "@/lib/user-actions"
 
-/* ---------------- template helpers ---------------- */
-const DEFAULT_MAP = Object.fromEntries(DEFAULT_TEMPLATES.map((t) => [t.name, t]))
+/* -------------------- types --------------------- */
+type GroupWithCount = Group & { user_count?: number }
 
-const fetchCustomTemplateNames = async (): Promise<string[]> =>
-  (await fetch("/api/templates")).json()
-
-const fetchTemplate = async (name: string) => {
-  if (DEFAULT_MAP[name]) return DEFAULT_MAP[name]
-  const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
-  if (!res.ok) throw new Error("Template not found")
-  return (await res.json()) as { name: string; attributes: Record<string, any> }
+type AfterSavePayload = {
+  userId: string
+  oldGroupId?: string | null
+  newGroupId?: string | null
+  newAttributes?: Record<string, any>
+  appliedTemplateName?: string | null
 }
 
-const saveTemplate = async (tpl: {
-  name: string
-  description: string
-  attributes: Record<string, any>
-}) =>
-  fetch("/api/templates", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(tpl),
-  })
-
-/* ------------- visible attribute schema ------------ */
+/* ------------- attribute schema visible ---------- */
 const ATTRIBUTE_SCHEMA: Record<
   string,
   { label: string; type: "text" | "select" | "tel"; options?: string[] }
@@ -56,11 +50,6 @@ const ATTRIBUTE_SCHEMA: Record<
       "Corporate Executive",
       "Law Firm",
       "Solo Practitioner",
-      "Barristers' Chambers",
-      "Judiciary",
-      "Government Lawyer",
-      "Law School",
-      "Vendor",
     ],
   },
   "job-function": {
@@ -73,129 +62,102 @@ const ATTRIBUTE_SCHEMA: Record<
   phone: { label: "Phone", type: "tel" },
 }
 
-/* ---------------- groups helpers ------------------ */
-const GROUP_ICON_EMOJI: Record<string, string> = {
-  scale: "⚖️",
-  bank: "🏛️",
-  clipboard: "📋",
-  shield: "🛡️",
-  user: "👤",
-  users: "👥",
-  briefcase: "💼",
-  file: "📄",
-  chart: "📈",
-  pie: "📊",
-  gavel: "🔨",
-  building: "🏢",
-  folder: "🗂️",
-  book: "📘",
+/* ---------------- template helpers ---------------- */
+const DEFAULT_MAP = Object.fromEntries(DEFAULT_TEMPLATES.map((t) => [t.name, t]))
+
+const fetchCustomTemplateNames = async (): Promise<string[]> =>
+  (await fetch("/api/templates")).json()
+
+const fetchTemplate = async (name: string) => {
+  if (DEFAULT_MAP[name]) return DEFAULT_MAP[name]
+  const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
+  if (!res.ok) throw new Error("Template not found")
+  return (await res.json()) as { name: string; attributes: Record<string, any> }
 }
 
+/* ---------------- group helpers ------------------ */
 const slugify = (s: string) =>
   s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
 
-function buildGroupLookups(groups: Group[]) {
-  return {
-    byId: Object.fromEntries(groups.map((g) => [g.id, g])),
-    bySlug: Object.fromEntries(groups.map((g) => [g.slug.toLowerCase().trim(), g])),
-    byNameLower: Object.fromEntries(groups.map((g) => [g.name.toLowerCase().trim(), g])),
-    byNameSlug: Object.fromEntries(groups.map((g) => [slugify(g.name), g])),
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function getRawGroupValue(u: any): string | null {
+  const a = u?.attributes ?? {}
+  const candidates: unknown[] = [
+    a.group, a.Group, a["group-name"], a["group_name"],
+    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"], u.group,
+  ]
+  for (const c of candidates) {
+    if (!c) continue
+    if (typeof c === "string") return c.trim()
+    if (typeof c === "object" && c && "value" in (c as any) && typeof (c as any).value === "string") {
+      return (c as any).value.trim()
+    }
   }
+  return null
 }
 
-function resolveGroup(raw: unknown, lookups: ReturnType<typeof buildGroupLookups>): Group | null {
-  if (!raw) return null
-  const v = String(raw).trim()
-  const low = v.toLowerCase()
-  return (
-    lookups.byId[v] ||
-    lookups.bySlug[low] ||
-    lookups.byNameLower[low] ||
-    lookups.byNameSlug[slugify(v)] ||
-    null
-  )
-}
-
-const extractDemographicsFromGroup = (g?: Group | null) => {
-  if (!g) return {}
-  const d = (g.demographics || {}) as any
-  return {
-    ...(d["country"] ? { country: d["country"] } : d["region"] ? { country: d["region"] } : {}),
-    ...(d["job-function"]
-      ? { "job-function": d["job-function"] }
-      : d["job_function"]
-      ? { "job-function": d["job_function"] }
-      : {}),
-    ...(d["job-area"]
-      ? { "job-area": d["job-area"] }
-      : d["job_area"]
-      ? { "job-area": d["job_area"] }
-      : {}),
+function buildLookups(groups: GroupWithCount[]) {
+  const byId = Object.fromEntries(groups.map((g) => [g.id, g]))
+  const byName = Object.fromEntries(groups.map((g) => [g.name, g]))
+  const byNameLower = Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g]))
+  const bySlug = Object.fromEntries(groups.map((g) => [g.slug, g]))
+  const bySlugifiedName = Object.fromEntries(groups.map((g) => [slugify(g.name), g]))
+  const resolve = (value?: string | null): GroupWithCount | null => {
+    if (!value) return null
+    const raw = String(value).trim()
+    if (!raw) return null
+    if (UUID_V4.test(raw) && byId[raw]) return byId[raw]
+    if (byName[raw]) return byName[raw]
+    const lower = raw.toLowerCase()
+    if (byNameLower[lower]) return byNameLower[lower]
+    if (bySlug[raw]) return bySlug[raw]
+    const vSlug = slugify(raw)
+    if (bySlug[vSlug]) return bySlug[vSlug]
+    if (bySlugifiedName[vSlug]) return bySlugifiedName[vSlug]
+    return null
   }
+  return { byId, resolve }
 }
 
-/* ------------------ component ---------------------- */
-interface Props {
-  userDetails: ZephrUser | null
-  loading: boolean
-  error: string | null
-  isOpen: boolean
-  onClose: () => void
-  onUserUpdated?: () => void
-  groups: Group[]
-}
-
+/* ---------------- component ---------------------- */
 export function UserEditModal({
   userDetails,
+  groups,
   loading,
   error,
   isOpen,
   onClose,
-  onUserUpdated,
-  groups,
-}: Props) {
-  const lookups = useMemo(() => buildGroupLookups(groups), [groups])
-
-  const [fetching, setFetching] = useState(false)
-  const [fetchErr, setFetchErr] = useState<string | null>(null)
-  const [details, setDetails] = useState<ZephrUser | null>(userDetails)
-
+  onAfterSave,
+}: {
+  userDetails: any | null
+  groups: GroupWithCount[]
+  loading: boolean
+  error: string | null
+  isOpen: boolean
+  onClose: () => void
+  onAfterSave?: (p: AfterSavePayload) => void
+}) {
   const [edited, setEdited] = useState<Record<string, any>>({})
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  /* templates */
+  // templates
   const [tplNames, setTplNames] = useState<string[]>([])
   const [tplErr, setTplErr] = useState<string | null>(null)
-  const [pendingTpl, setPendingTpl] = useState<string | null>(null)
+  const [tplValue, setTplValue] = useState<string | null>(null) // controlled select
+  const [pendingTpl, setPendingTpl] = useState<string | null>(null) // toast wording
 
-  const currentGroupObj = useMemo(
-    () => resolveGroup(details?.attributes?.group, lookups),
-    [details, lookups]
-  )
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(
-    currentGroupObj?.id ?? null
-  )
+  // groups
+  const lookups = useMemo(() => buildLookups(groups), [groups])
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [fetchErr, setFetchErr] = useState<string | null>(null)
 
-  /* --- fetch single user fresh on open --- */
-  useEffect(() => {
-    if (!isOpen || !userDetails?.user_id) return
-    ;(async () => {
-      try {
-        setFetching(true)
-        setFetchErr(null)
-        const fresh = await getUserDetailsAction(userDetails.user_id)
-        setDetails(fresh)
-      } catch (e: any) {
-        setFetchErr(e?.message || "Failed to load user details")
-      } finally {
-        setFetching(false)
-      }
-    })()
-  }, [isOpen, userDetails?.user_id])
+  const details = userDetails
 
-  /* --- template list --- */
+  /* --- load templates list on open --- */
   useEffect(() => {
     if (!isOpen) return
     ;(async () => {
@@ -212,37 +174,55 @@ export function UserEditModal({
     })()
   }, [isOpen])
 
-  /* --- initialize form when details ready --- */
+  /* --- initialise form values from user --- */
   useEffect(() => {
     if (!details || !isOpen) return
+
+    // attributes
     const init: Record<string, any> = {}
     Object.keys(ATTRIBUTE_SCHEMA).forEach((k) => {
-      init[k] = details.attributes[k] ?? ""
+      init[k] = details.attributes?.[k] ?? ""
     })
-    // keep any extra attributes too (don’t drop)
-    Object.entries(details.attributes).forEach(([k, v]) => {
+    // copy through other attributes if any
+    Object.entries(details.attributes ?? {}).forEach(([k, v]) => {
       if (!(k in init)) init[k] = v
     })
-    // visible group text for completeness
-    init.group = details.attributes?.group ?? ""
     setEdited(init)
-    setSaveErr(null)
-    setSuccess(null)
-    setPendingTpl(null)
+    setSaveErr(null); setSuccess(null)
 
-    // set group selector
-    const g = resolveGroup(details.attributes?.group, lookups)
-    setSelectedGroupId(g?.id ?? null)
+    // figure current group
+    const raw = getRawGroupValue(details)
+    const resolved = lookups.resolve(raw)
+    setSelectedGroupId(resolved?.id ?? null)
+
+    // if current group has a default template, select it in the dropdown (and apply now)
+    if (resolved?.default_template) {
+      const name = resolved.default_template
+      setTplValue(name)
+      ;(async () => {
+        try {
+          const tpl = await fetchTemplate(name)
+          setEdited((p) => ({ ...p, ...tpl.attributes }))
+          setPendingTpl(name)
+        } catch (e) {
+          console.error(e)
+        }
+      })()
+    } else {
+      setTplValue(null)
+      setPendingTpl(null)
+    }
   }, [details, isOpen, lookups])
 
-  /* ------------- handlers ----------------------- */
+  /* ---------------- handlers ---------------- */
   const onAttrChange = (k: string, v: string) => setEdited((p) => ({ ...p, [k]: v }))
 
-  const applyTemplate = async (name: string) => {
+  const onChooseTemplate = async (name: string) => {
     if (!name) return
     try {
       const tpl = await fetchTemplate(name)
       setEdited((p) => ({ ...p, ...tpl.attributes }))
+      setTplValue(name)
       setPendingTpl(name)
       setSaveErr(null)
     } catch (e) {
@@ -251,37 +231,34 @@ export function UserEditModal({
     }
   }
 
-  const saveAsTemplate = async () => {
-    if (!details) return
-    const tplName = details.identifiers.email_address
-    try {
-      await saveTemplate({
-        name: tplName,
-        description: `Template captured from ${tplName}`,
-        attributes: edited,
-      })
-      setTplNames((p) => (p.includes(tplName) ? p : [...p, tplName]))
-      setSuccess("Template saved!")
-    } catch (e) {
-      console.error(e)
-      setSaveErr("Could not save template")
+  const onChooseGroup = async (id: string) => {
+    setSelectedGroupId(id)
+    const g = lookups.byId[id]
+    setEdited((p) => ({
+      ...p,
+      group: g?.name ?? "",
+      ...(g?.demographics ?? {}),
+    }))
+    // If group has a default template, show it as selected and apply attributes now
+    if (g?.default_template) {
+      const name = g.default_template
+      try {
+        const tpl = await fetchTemplate(name)
+        setEdited((p) => ({ ...p, ...tpl.attributes }))
+        setTplValue(name)
+        setPendingTpl(name)
+      } catch (e) {
+        console.error(e)
+      }
     }
   }
 
   const handleSave = async () => {
     if (!details) return
-    setSaving(true)
-    setSaveErr(null)
-    setSuccess(null)
+    setSaving(true); setSaveErr(null); setSuccess(null)
 
     const patch: Record<string, any> = {}
     for (const [k, v] of Object.entries(edited)) if (v !== "") patch[k] = v
-
-    // include group mapping + demographics if a group is chosen
-    if (selectedGroupId) {
-      const g = lookups.byId[selectedGroupId]
-      if (g) Object.assign(patch, { group: g.name }, extractDemographicsFromGroup(g))
-    }
 
     if (Object.keys(patch).length === 0) {
       setSaveErr("No attributes to save")
@@ -290,164 +267,187 @@ export function UserEditModal({
     }
 
     try {
-      await updateUserAttributesAction(details.user_id, patch)
-      setSuccess(
-        pendingTpl ? `Template “${pendingTpl}” applied & user updated!` : "User updated successfully!"
-      )
-      setPendingTpl(null)
-      onUserUpdated?.()
-      setTimeout(onClose, 1500)
+      const res = await updateUserAttributesAction(details.user_id, patch)
+      if (res?.success) {
+        const before = lookups.resolve(getRawGroupValue(details))
+        const after  = lookups.resolve(edited.group)
+
+        setSuccess(
+          pendingTpl
+            ? `Template “${pendingTpl}” applied & user updated!`
+            : "User updated successfully!"
+        )
+
+        // bubble up to table so counts & row can update
+        onAfterSave?.({
+          userId: details.user_id,
+          oldGroupId: before?.id ?? null,
+          newGroupId: after?.id ?? null,
+          newAttributes: patch,
+          appliedTemplateName: pendingTpl ?? tplValue ?? null,
+        })
+
+        setTimeout(onClose, 1200)
+      } else {
+        setSaveErr(res?.error || "Failed to update user")
+      }
     } catch (e: any) {
-      setSaveErr(e?.message || "Failed to update user")
+      setSaveErr(e?.message ?? "Failed to update user")
     } finally {
       setSaving(false)
     }
   }
 
-  /* ---------------- render ---------------------- */
+  /* ---------------- render ------------------ */
   if (!isOpen) return null
-
-  const headerGroup =
-    (selectedGroupId && lookups.byId[selectedGroupId]) ||
-    currentGroupObj ||
-    null
-  const groupEmoji = headerGroup ? GROUP_ICON_EMOJI[headerGroup.icon || ""] ?? "📁" : null
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-paper border border-line text-ink">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-serif text-ink">
-            {groupEmoji ? (
-              <span className="text-xl leading-none" aria-hidden="true">
-                {groupEmoji}
-              </span>
-            ) : (
-              <UserIcon className="h-5 w-5" aria-hidden="true" />
-            )}
-            Edit User: {details?.identifiers.email_address || userDetails?.identifiers.email_address || "…"}
+            <UsersIcon className="h-5 w-5" aria-hidden="true" />
+            Edit User: {details?.identifiers?.email_address ?? "…"}
           </DialogTitle>
         </DialogHeader>
 
-{/* Apply Template + Group (one box) */}
-<Card className="mt-2 rounded-none border border-line bg-paper">
-  <CardHeader className="pb-2">
-    <CardTitle className="font-serif text-lg text-ink">Apply</CardTitle>
-  </CardHeader>
-  <CardContent>
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      {/* Left: Template */}
-      <div className="space-y-2">
-        <Label className="text-[hsl(var(--muted-foreground))]">Apply Template</Label>
-        {tplErr ? (
-          <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
-        ) : tplNames.length === 0 ? (
-          <Select disabled>
-            <SelectTrigger className="rounded-none border border-line bg-paper text-[hsl(var(--muted-foreground))]">
-              <SelectValue placeholder="No templates available" />
-            </SelectTrigger>
-          </Select>
-        ) : (
-          <Select onValueChange={applyTemplate}>
-            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-              <SelectValue placeholder="Choose template…" />
-            </SelectTrigger>
-            <SelectContent className="rounded-none border border-line bg-paper">
-              {tplNames.map((n) => (
-                <SelectItem
-                  key={n}
-                  value={n}
-                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+        {/* Top box: Group + Template */}
+        <Card className="rounded-none border border-line bg-paper">
+          <CardHeader className="pb-2">
+            <CardTitle className="font-serif text-lg text-ink">Apply Group & Template</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {/* Group */}
+              <div className="space-y-2">
+                <Label className="text-[hsl(var(--muted-foreground))]">Assign / Change Group</Label>
+                <Select
+                  value={selectedGroupId ?? ""}
+                  onValueChange={onChooseGroup}
                 >
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
-
-      {/* Right: Group */}
-      <div className="space-y-2">
-        <Label className="text-[hsl(var(--muted-foreground))]">Assign / Change Group</Label>
-        <Select
-          value={selectedGroupId ?? ""}
-          onValueChange={(id) => {
-            setSelectedGroupId(id)
-            const g = lookups.byId[id]
-            setEdited((p) => ({
-              ...p,
-              group: g?.name ?? "",
-              ...extractDemographicsFromGroup(g || undefined),
-            }))
-          }}
-        >
-          <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-            <SelectValue placeholder="Select a group…" />
-          </SelectTrigger>
-          <SelectContent className="rounded-none border border-line bg-paper">
-            {groups.map((g) => (
-              <SelectItem
-                key={g.id}
-                value={g.id}
-                className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
-              >
-                {g.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
-  </CardContent>
-</Card>
-
-
-                      {/* Attributes */}
-              <Card className="mt-6 rounded-none border border-line bg-paper">
-                <CardHeader>
-                  <CardTitle className="font-serif text-lg text-ink">User Attributes</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    {Object.entries(ATTRIBUTE_SCHEMA).map(([k, s]) => (
-                      <div key={k} className="space-y-2">
-                        <Label className="text-[hsl(var(--muted-foreground))]">
-                          {s.label}
-                        </Label>
-                        {s.type === "select" ? (
-                          <Select
-                            value={(edited[k] as string) || ""}
-                            onValueChange={(v) => onAttrChange(k, v)}
-                          >
-                            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                              <SelectValue placeholder={`Select ${s.label}`} />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-none border border-line bg-paper">
-                              {s.options!.map((opt) => (
-                                <SelectItem
-                                  key={opt}
-                                  value={opt}
-                                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
-                                >
-                                  {opt}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input
-                            type={s.type}
-                            value={(edited[k] as string) || ""}
-                            onChange={(e) => onAttrChange(k, e.target.value)}
-                            className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
-                          />
-                        )}
-                      </div>
+                  <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                    <SelectValue placeholder="Select a group…" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none border border-line bg-paper">
+                    {groups.map((g) => (
+                      <SelectItem
+                        key={g.id}
+                        value={g.id}
+                        className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                      >
+                        {g.name}
+                      </SelectItem>
                     ))}
-                  </div>
-                </CardContent>
-              </Card>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Template */}
+              <div className="space-y-2">
+                <Label className="text-[hsl(var(--muted-foreground))]">Apply Template</Label>
+                {tplErr ? (
+                  <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
+                ) : tplNames.length === 0 ? (
+                  <Select disabled>
+                    <SelectTrigger className="rounded-none border border-line bg-paper text-[hsl(var(--muted-foreground))]">
+                      <SelectValue placeholder="No templates available" />
+                    </SelectTrigger>
+                  </Select>
+                ) : (
+                  <Select value={tplValue ?? ""} onValueChange={onChooseTemplate}>
+                    <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                      <SelectValue placeholder="Choose template…" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-none border border-line bg-paper">
+                      {tplNames.map((n) => (
+                        <SelectItem
+                          key={n}
+                          value={n}
+                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                        >
+                          {n}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* alerts */}
+        {(error || fetchErr) && (
+          <Alert className="mt-4 rounded-none border border-line bg-[hsl(var(--muted))]">
+            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription className="text-ink">{error || fetchErr}</AlertDescription>
+          </Alert>
+        )}
+        {saveErr && (
+          <Alert variant="destructive" className="mt-4 rounded-none">
+            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription>{saveErr}</AlertDescription>
+          </Alert>
+        )}
+        {success && (
+          <Alert className="mt-4 rounded-none border border-line bg-[hsl(var(--secondary))]/20">
+            <Info className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription className="text-ink">{success}</AlertDescription>
+          </Alert>
+        )}
+
+        {/* attributes */}
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin text-ink" />
+            <span className="text-[hsl(var(--muted-foreground))]">Loading…</span>
+          </div>
+        ) : (
+          details && (
+            <Card className="mt-6 rounded-none border border-line bg-paper">
+              <CardHeader>
+                <CardTitle className="font-serif text-lg text-ink">User Attributes</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {Object.entries(ATTRIBUTE_SCHEMA).map(([k, s]) => (
+                    <div key={k} className="space-y-2">
+                      <Label className="text-[hsl(var(--muted-foreground))]">{s.label}</Label>
+                      {s.type === "select" ? (
+                        <Select
+                          value={(edited[k] as string) || ""}
+                          onValueChange={(v) => onAttrChange(k, v)}
+                        >
+                          <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                            <SelectValue placeholder={`Select ${s.label}`} />
+                          </SelectTrigger>
+                          <SelectContent className="rounded-none border border-line bg-paper">
+                            {s.options!.map((opt) => (
+                              <SelectItem
+                                key={opt}
+                                value={opt}
+                                className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                              >
+                                {opt}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          type={s.type}
+                          value={(edited[k] as string) || ""}
+                          onChange={(e) => onAttrChange(k, e.target.value)}
+                          className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )
+        )}
 
         {/* actions */}
         <div className="mt-6 flex justify-end gap-3 border-t border-line pt-4">
@@ -455,20 +455,9 @@ export function UserEditModal({
             size="sm"
             variant="outline"
             onClick={onClose}
-            className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
+            className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted)))]"
           >
             Cancel
-          </Button>
-
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={saveAsTemplate}
-            className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
-            title="Create template from current attributes"
-          >
-            <FileText className="mr-1 h-4 w-4" />
-            Save Template
           </Button>
 
           <Button

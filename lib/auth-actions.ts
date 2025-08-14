@@ -136,24 +136,22 @@ export async function getCurrentUser() {
   const accountsJson = cookieStore.get("user_accounts")?.value
   const activeAccountId = cookieStore.get("active_account_id")?.value
 
-  if (!userEmail) {
-    return null
-  }
+  if (!userEmail) return null
 
   let accounts: ZephrAccount[] = []
   try {
-    if (accountsJson) {
-      accounts = JSON.parse(accountsJson)
-    }
+    if (accountsJson) accounts = JSON.parse(accountsJson)
   } catch (error) {
     console.error("Error parsing user accounts from cookie:", error)
   }
 
-  const activeAccount = accounts.find((account) => account.account_id === activeAccountId) || accounts[0]
+  const activeAccount =
+    accounts.find((account) => account.account_id === activeAccountId) || accounts[0]
 
   return {
     email: userEmail,
     isAdmin,
+    role: isAdmin ? "admin" : "member", // ← add this line
     session,
     accounts,
     activeAccount,

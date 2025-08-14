@@ -3,7 +3,7 @@ import { Suspense } from "react"
 
 /* ---------- server helpers ---------- */
 import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
-import { listGroups } from "@/lib/groups"
+import { listGroups, type Group } from "@/lib/groups"
 
 /* ---------- ui ---------- */
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
@@ -37,8 +37,8 @@ async function UsersPage() {
     listGroups(accountId as string),
   ])
 
-  const users  = usersRes.status  === "fulfilled" ? usersRes.value  : ([] as any[])
-  const groups = groupsRes.status === "fulfilled" ? groupsRes.value : ([] as any[])
+  const users = usersRes.status === "fulfilled" ? usersRes.value : ([] as any[])
+  const groups = (groupsRes.status === "fulfilled" ? groupsRes.value : []) as Group[]
   const loadError =
     usersRes.status === "rejected"
       ? usersRes.reason?.message ?? "Unknown error"
@@ -49,7 +49,7 @@ async function UsersPage() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 font-serif text-2xl text-ink">
           <UsersIcon className="h-6 w-6" aria-hidden="true" />
-          Account Users — {acct.name}
+          Account Users — {(acct as any)?.name ?? "Account"}
         </CardTitle>
       </CardHeader>
 
@@ -62,7 +62,14 @@ async function UsersPage() {
             </AlertDescription>
           </Alert>
         ) : (
-          <Suspense fallback={<p className="text-sm text-[hsl(var(--muted-foreground))]">Loading…</p>}>
+          <Suspense
+            fallback={
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                Loading…
+              </p>
+            }
+          >
+            {/* Pass users + groups (with user_count) to the client table */}
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}

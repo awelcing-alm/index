@@ -176,7 +176,7 @@ audit_events(
   at timestamptz default now(),
   actor text,
   kind text, -- e.g., "user.update", "group.assign"
-  account_id uuid,
+  account_id text,
   user_id uuid,
   group_id uuid,
   payload jsonb

@@ -89,12 +89,12 @@ export default function UsersTable({
   const pageCount = Math.ceil(rows.length / PER_PAGE)
   const pagedRows = useMemo(() => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE), [rows, page])
   const goFirst = () => setPage(0)
-  const goPrev  = () => setPage((p) => Math.max(0, p - 1))
-  const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
-  const goLast  = () => setPage(pageCount - 1)
+  const goPrev = () => setPage((p) => Math.max(0, p - 1))
+  const goNext = () => setPage((p) => Math.min(pageCount - 1, p + 1))
+  const goLast = () => setPage(pageCount - 1)
 
   /* ---------------- groups lookup maps ---------------- */
-  const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
+  const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
   const groupByName = useMemo(() => Object.fromEntries(groups.map((g) => [g.name, g])), [groups])
   const groupByNameLower = useMemo(
     () => Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g])),
@@ -306,7 +306,7 @@ export default function UsersTable({
         await navigator.clipboard.writeText(email)
         setCopied(true)
         setTimeout(() => setCopied(false), 1200)
-      } catch {}
+      } catch { }
     }
     return (
       <button
@@ -472,8 +472,22 @@ export default function UsersTable({
                           userEmail={u.identifiers.email_address}
                           existingAttributes={u.attributes}
                           groups={groups}
-                          onAfterSave={handleUserModalSaved}
+                          onAfterSave={(payload: any) => {
+                            // Expecting payload.membershipDeltas?: Array<{ id: string; delta: number }>
+                            const deltas = payload?.membershipDeltas as { id: string; delta: number }[] | undefined
+                            if (!deltas || deltas.length === 0) return
+
+                            // Optimistically update right-rail counts
+                            setCounts(prev => {
+                              const next = { ...prev }
+                              for (const { id, delta } of deltas) {
+                                next[id] = Math.max(0, (next[id] ?? 0) + delta)
+                              }
+                              return next
+                            })
+                          }}
                         />
+
                       </TableCell>
                     </StrictRow>
                   )

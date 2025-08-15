@@ -68,7 +68,6 @@ const UUID_V4 =
 const slugify = (s: string) =>
   s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
 
-/** Extract any plausible stored value for the user's group from Zephr payloads. */
 function getRawGroupValue(u: UiUser): string | null {
   const a = u?.attributes ?? {}
   const candidates: unknown[] = [
@@ -101,7 +100,12 @@ export default function UsersTable({
   const PER_PAGE = 25
   const [page, setPage] = useState(0)
   const pageCount = Math.ceil(rows.length / PER_PAGE)
-  const pagedRows = useMemo(() => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE), [rows, page])
+  const pagedRows = useMemo(
+    () => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE),
+    [rows, page]
+  )
+  const pageUserIds = useMemo(() => pagedRows.map((u) => u.user_id), [pagedRows])
+
   const goFirst = () => setPage(0)
   const goPrev  = () => setPage((p) => Math.max(0, p - 1))
   const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
@@ -176,35 +180,39 @@ export default function UsersTable({
     }
   }
 
-  /** Fetch DB memberships → annotate rows (so icons persist across refresh). */
-  const refreshMemberships = useCallback(async () => {
-    if (!accountId) return
+  /** Fetch DB memberships for the *current page* → annotate rows so icons persist. */
+  const refreshMemberships = useCallback(async (userIds: string[]) => {
+    if (!userIds.length) return
     try {
-      const res = await fetch(`/api/group-memberships?accountId=${encodeURIComponent(accountId)}`, { cache: "no-store" })
+      // Uses existing GET reader: /api/groups/membership?user_ids=U1,U2,...
+      const qs = encodeURIComponent(userIds.join(","))
+      const res = await fetch(`/api/groups/membership?user_ids=${qs}`, { cache: "no-store" })
       if (!res.ok) return
       const payload = await res.json() as {
         ok: boolean,
-        byUserId: Record<string, { group_id: string, name: string, icon: string | null }>
+        memberships: Record<string, { group_id: string, name: string | null, icon: string | null }>
       }
       if (!payload?.ok) return
-      const byUser = payload.byUserId || {}
+      const byUser = payload.memberships || {}
       startTransition(() => {
         setRows(prev =>
           prev.map(u => {
             const m = byUser[u.user_id]
             return m
-              ? { ...u, group_id: m.group_id, group_icon: m.icon, group_name: m.name }
+              ? { ...u, group_id: m.group_id, group_icon: m.icon, group_name: m.name ?? undefined }
               : u
           })
         )
       })
     } catch (e) {
-      // best-effort; no user-visible error
       console.error("refreshMemberships failed", e)
     }
-  }, [accountId])
+  }, [])
 
-  useEffect(() => { refreshMemberships() }, [refreshMemberships])
+  // hydrate icons for each page
+  useEffect(() => {
+    refreshMemberships(pageUserIds)
+  }, [refreshMemberships, pageUserIds])
 
   /** Compute and apply counts optimistically. Keys are group IDs. */
   const applyCountDeltasLocal = (deltas: Record<string, number>) => {
@@ -218,84 +226,78 @@ export default function UsersTable({
     })
   }
 
-async function assignToGroup(targetGroupId: string, userIds: string[]) {
-  if (!userIds.length || !accountId) return
-  const g = groupById[targetGroupId]
-  if (!g) return
+  async function assignToGroup(targetGroupId: string, userIds: string[]) {
+    if (!userIds.length) return
+    const g = groupById[targetGroupId]; if (!g) return
 
-  // Build deltas from CURRENT rows (old group -> -1, new group -> +N)
-  const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
-  const oldIds = new Set<string>()
-  for (const u of rows) {
-    if (!userIds.includes(u.user_id)) continue
-    const old = u.group_id
-    if (old && old !== targetGroupId) oldIds.add(old)
-  }
-  for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
-
-  // Build payload compatible with BOTH old (changes-only) and new (assignments) API
-  const payload = {
-    accountId,
-    assignments: userIds.map((uid) => ({ user_id: uid, group_id: targetGroupId })),
-    changes: Object.entries(deltas).map(([id, delta]) => ({ id, delta })), // always non-empty (+N to target)
-  }
-
-  // Optional demographics you merge into Zephr attributes
-  const demo = extractDemographicAttrs(g)
-
-  setLoading(true); setError(null)
-  try {
-    // 1) Patch Zephr attributes (source of truth)
-    await Promise.all(
-      userIds.map((uid) =>
-        updateUserAttributesAction(uid, { group: g.name, ...demo })
-      )
-    )
-
-    // 2) Persist membership/counts on the server (works with old/new route)
-    const res = await fetch("/api/groups/membership", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-    const data = await res.json()
-    if (!res.ok || !data?.ok) {
-      throw new Error(data?.error || "Failed to persist membership")
+    // Build deltas: +N to target, -1 for each old group (when different)
+    const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
+    const oldIds = new Set<string>()
+    for (const u of rows) {
+      if (!userIds.includes(u.user_id)) continue
+      const old = u.group_id
+      if (old && old !== targetGroupId) oldIds.add(old)
     }
+    for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
 
-    // 3) Optimistic UI update (icon + name + attributes)
-    startTransition(() =>
-      setRows((prev) =>
-        prev.map((u) =>
-          userIds.includes(u.user_id)
-            ? {
-                ...u,
-                group_id: g.id,
-                group_icon: g.icon,
-                group_name: g.name,
-                attributes: { ...u.attributes, group: g.name, ...demo },
-              }
-            : u
-        )
+    const demo = extractDemographicAttrs(g)
+
+    setLoading(true); setError(null)
+    try {
+      // 1) Patch Zephr attributes
+      await Promise.all(
+        userIds.map((uid) =>
+          updateUserAttributesAction(uid, { group: g.name, ...demo }),
+        ),
       )
-    )
 
-    // 4) Counts (apply server deltas if provided, else use our local deltas)
-    const serverDeltas: Record<string, number> | undefined = data?.deltas
-    applyCountDeltasLocal(serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas)
+      // 2) Persist membership + counts
+      const payload = {
+        assignments: userIds.map((uid) => ({ user_id: uid, group_id: targetGroupId })),
+        changes: Object.entries(deltas).map(([id, delta]) => ({ id, delta })),
+      }
+      const res = await fetch("/api/groups/membership", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Failed to persist membership")
+      }
 
-    // 5) Re-hydrate from DB so icons persist after refresh
-    await refreshMemberships()
+      // 3) Optimistic UI update
+      startTransition(() =>
+        setRows((prev) =>
+          prev.map((u) =>
+            userIds.includes(u.user_id)
+              ? {
+                  ...u,
+                  group_id: g.id,
+                  group_icon: g.icon,
+                  group_name: g.name,
+                  attributes: { ...u.attributes, group: g.name, ...demo },
+                }
+              : u
+          ),
+        ),
+      )
 
-    setSelected(new Set())
-  } catch (e: any) {
-    console.error(e)
-    setError(e?.message ?? "Group assign failed")
-  } finally {
-    setLoading(false)
+      // 4) Counts
+      const serverDeltas: Record<string, number> | undefined = data?.deltas
+      applyCountDeltasLocal(serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas)
+
+      // 5) Re-hydrate for current page so icons persist reliably
+      await refreshMemberships(pageUserIds)
+
+      setSelected(new Set())
+    } catch (e: any) {
+      console.error(e)
+      setError(e?.message ?? "Group assign failed")
+    } finally {
+      setLoading(false)
+    }
   }
-}
-
 
   async function applyGroup(targetGroupId: string) {
     await assignToGroup(targetGroupId, Array.from(selected))
@@ -453,113 +455,113 @@ async function assignToGroup(targetGroupId: string, userIds: string[]) {
             </CardTitle>
           </CardHeader>
 
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <StrictRow className="border-line hover:bg-[hsl(var(--muted))]">
-                <TableHead>
-                  <Checkbox
-                    checked={pagedRows.length > 0 && pagedRows.every((u) => selected.has(u.user_id))}
-                    onCheckedChange={toggleAllOnPage}
-                    className="rounded-none"
-                    aria-label="Select all on page"
-                  />
-                </TableHead>
-                <TableHead className="text-ink">User</TableHead>
-                <TableHead className="text-ink">Email</TableHead>
-                <TableHead className="text-ink">Group</TableHead>
-                <TableHead className="text-ink">Role</TableHead>
-                <TableHead className="text-ink">Edit</TableHead>
-              </StrictRow>
-            </TableHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <StrictRow className="border-line hover:bg-[hsl(var(--muted))]">
+                  <TableHead>
+                    <Checkbox
+                      checked={pagedRows.length > 0 && pagedRows.every((u) => selected.has(u.user_id))}
+                      onCheckedChange={toggleAllOnPage}
+                      className="rounded-none"
+                      aria-label="Select all on page"
+                    />
+                  </TableHead>
+                  <TableHead className="text-ink">User</TableHead>
+                  <TableHead className="text-ink">Email</TableHead>
+                  <TableHead className="text-ink">Group</TableHead>
+                  <TableHead className="text-ink">Role</TableHead>
+                  <TableHead className="text-ink">Edit</TableHead>
+                </StrictRow>
+              </TableHeader>
 
-            <TableBody>
-              {pagedRows.map((u) => {
-                const fn = u.attributes?.firstname || ""
-                const ln = u.attributes?.lastname || u.attributes?.surname || ""
-                const displayName =
-                  fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
+              <TableBody>
+                {pagedRows.map((u) => {
+                  const fn = u.attributes?.firstname || ""
+                  const ln = u.attributes?.lastname || u.attributes?.surname || ""
+                  const displayName =
+                    fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
 
-                return (
-                  <StrictRow
-                    key={u.user_id}
-                    className="border-line hover:bg-[hsl(var(--muted))]"
-                    draggable
-                    onDragStart={(e) => onDragStart(e as any, u.user_id)}
-                  >
-                    <TableCell>
-                      <Checkbox
-                        checked={selected.has(u.user_id)}
-                        onCheckedChange={() => toggle(u.user_id)}
-                        className="rounded-none"
-                        aria-label={`Select ${displayName}`}
-                      />
-                    </TableCell>
+                  return (
+                    <StrictRow
+                      key={u.user_id}
+                      className="border-line hover:bg-[hsl(var(--muted))]"
+                      draggable
+                      onDragStart={(e) => onDragStart(e as any, u.user_id)}
+                    >
+                      <TableCell>
+                        <Checkbox
+                          checked={selected.has(u.user_id)}
+                          onCheckedChange={() => toggle(u.user_id)}
+                          className="rounded-none"
+                          aria-label={`Select ${displayName}`}
+                        />
+                      </TableCell>
 
-                    <TableCell className="font-medium text-ink">
-                      {displayName}
-                    </TableCell>
+                      <TableCell className="font-medium text-ink">
+                        {displayName}
+                      </TableCell>
 
-                    <TableCell className="text-[hsl(var(--muted-foreground))]">
-                      <EmailCopy email={u.identifiers.email_address} />
-                    </TableCell>
+                      <TableCell className="text-[hsl(var(--muted-foreground))]">
+                        <EmailCopy email={u.identifiers.email_address} />
+                      </TableCell>
 
-                    <TableCell>
-                      <GroupIconCell row={u} />
-                    </TableCell>
+                      <TableCell>
+                        <GroupIconCell row={u} />
+                      </TableCell>
 
-                    <TableCell>
-                      {u.user_type === "owner" ? (
-                        <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-                          <Crown className="h-3 w-3" /> Owner
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-                          <UserIcon className="h-3 w-3" /> User
-                        </Badge>
-                      )}
-                    </TableCell>
+                      <TableCell>
+                        {u.user_type === "owner" ? (
+                          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
+                            <Crown className="h-3 w-3" /> Owner
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
+                            <UserIcon className="h-3 w-3" /> User
+                          </Badge>
+                        )}
+                      </TableCell>
 
-                    <TableCell>
-                      <UserEditButton
-                        userId={u.user_id}
-                        userEmail={u.identifiers.email_address}
-                        existingAttributes={u.attributes}
-                        groups={groups}
-                      />
-                    </TableCell>
-                  </StrictRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+                      <TableCell>
+                        <UserEditButton
+                          userId={u.user_id}
+                          userEmail={u.identifiers.email_address}
+                          existingAttributes={u.attributes}
+                          groups={groups}
+                        />
+                      </TableCell>
+                    </StrictRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
 
-          {pageCount > 1 && (
-            <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
-              <span>Page {page + 1} / {pageCount}</span>
-              <div className="flex items-center gap-1">
-                <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
-                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                  <ChevronLeft className="h-4 w-4" />
-                  <ChevronLeft className="h-4 w-4 -ml-2" />
-                </Button>
-                <Button size="icon" variant="ghost" onClick={goPrev} disabled={page === 0}
-                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button size="icon" variant="ghost" onClick={goNext} disabled={page === pageCount - 1}
-                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-                <Button size="icon" variant="ghost" onClick={goLast} disabled={page === pageCount - 1}
-                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                  <ChevronRight className="h-4 w-4" />
-                  <ChevronRight className="h-4 w-4 -ml-2" />
-                </Button>
+            {pageCount > 1 && (
+              <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
+                <span>Page {page + 1} / {pageCount}</span>
+                <div className="flex items-center gap-1">
+                  <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    <ChevronLeft className="h-4 w-4" />
+                    <ChevronLeft className="h-4 w-4 -ml-2" />
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={goPrev} disabled={page === 0}
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={goNext} disabled={page === pageCount - 1}
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={goLast} disabled={page === pageCount - 1}
+                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
+                    <ChevronRight className="h-4 w-4" />
+                    <ChevronRight className="h-4 w-4 -ml-2" />
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
-        </CardContent>
+            )}
+          </CardContent>
         </Card>
 
         {/* GROUP FOLDERS */}

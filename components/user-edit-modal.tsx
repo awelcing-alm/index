@@ -1,3 +1,4 @@
+// components/user-edit-modal.tsx
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
@@ -21,6 +22,7 @@ import {
 import type { Group } from "@/lib/groups"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import { updateUserAttributesAction } from "@/lib/user-actions"
+import NewsletterManagerModal from "@/components/newsletters/newsletter-manager-modal"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -62,6 +64,21 @@ const ATTRIBUTE_SCHEMA: Record<
   phone: { label: "Phone", type: "tel" },
 }
 
+// OptOut normalization (Zephr schema values vs UI labels)
+// Schema shows: "None" | "marketing" | "All"
+const OPT_OUT_LABELS = [
+  { ui: "None", value: "None" },
+  { ui: "Marketing", value: "marketing" },
+  { ui: "All", value: "All" },
+] as const
+
+function normalizeOptOutInput(v: unknown): string {
+  const s = (v ?? "").toString()
+  if (s.toLowerCase() === "marketing") return "marketing"
+  if (s === "All") return "All"
+  return "None"
+}
+
 /* ---------------- template helpers ---------------- */
 const DEFAULT_MAP = Object.fromEntries(DEFAULT_TEMPLATES.map((t) => [t.name, t]))
 
@@ -86,7 +103,7 @@ function getRawGroupValue(u: any): string | null {
   const a = u?.attributes ?? {}
   const candidates: unknown[] = [
     a.group, a.Group, a["group-name"], a["group_name"],
-    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"], u.group,
+    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"], u?.group,
   ]
   for (const c of candidates) {
     if (!c) continue
@@ -147,13 +164,16 @@ export function UserEditModal({
   // templates
   const [tplNames, setTplNames] = useState<string[]>([])
   const [tplErr, setTplErr] = useState<string | null>(null)
-  const [tplValue, setTplValue] = useState<string | null>(null) // controlled select
-  const [pendingTpl, setPendingTpl] = useState<string | null>(null) // toast wording
+  const [tplValue, setTplValue] = useState<string | null>(null)
+  const [pendingTpl, setPendingTpl] = useState<string | null>(null)
 
   // groups
   const lookups = useMemo(() => buildLookups(groups), [groups])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [fetchErr, setFetchErr] = useState<string | null>(null)
+
+  // newsletters modal state (must be inside component)
+  const [newsletterOpen, setNewsletterOpen] = useState(false)
 
   const details = userDetails
 
@@ -183,10 +203,14 @@ export function UserEditModal({
     Object.keys(ATTRIBUTE_SCHEMA).forEach((k) => {
       init[k] = details.attributes?.[k] ?? ""
     })
-    // copy through other attributes if any
+    // copy through other attributes if any (so we don't erase)
     Object.entries(details.attributes ?? {}).forEach(([k, v]) => {
       if (!(k in init)) init[k] = v
     })
+
+    // initialize optout explicitly (lives outside the grid)
+    init.optout = normalizeOptOutInput(details.attributes?.optout)
+
     setEdited(init)
     setSaveErr(null); setSuccess(null)
 
@@ -195,7 +219,7 @@ export function UserEditModal({
     const resolved = lookups.resolve(raw)
     setSelectedGroupId(resolved?.id ?? null)
 
-    // if current group has a default template, select it in the dropdown (and apply now)
+    // auto-apply default template from group (if any)
     if (resolved?.default_template) {
       const name = resolved.default_template
       setTplValue(name)
@@ -239,7 +263,6 @@ export function UserEditModal({
       group: g?.name ?? "",
       ...(g?.demographics ?? {}),
     }))
-    // If group has a default template, show it as selected and apply attributes now
     if (g?.default_template) {
       const name = g.default_template
       try {
@@ -270,7 +293,7 @@ export function UserEditModal({
       const res = await updateUserAttributesAction(details.user_id, patch)
       if (res?.success) {
         const before = lookups.resolve(getRawGroupValue(details))
-        const after  = lookups.resolve(edited.group)
+        const after = lookups.resolve(edited.group)
 
         setSuccess(
           pendingTpl
@@ -278,7 +301,6 @@ export function UserEditModal({
             : "User updated successfully!"
         )
 
-        // bubble up to table so counts & row can update
         onAfterSave?.({
           userId: details.user_id,
           oldGroupId: before?.id ?? null,
@@ -376,6 +398,36 @@ export function UserEditModal({
           </CardContent>
         </Card>
 
+        {/* NEW: Opt-out + Newsletters row */}
+        <div className="mt-3 flex items-center justify-between rounded-none border border-line bg-[hsl(var(--muted))]/20 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <Label className="text-[hsl(var(--muted-foreground))]">Opt Out Status</Label>
+            <Select
+              value={(edited.optout as string) ?? ""}
+              onValueChange={(v) => onAttrChange("optout", v)}
+            >
+              <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
+                <SelectValue placeholder="Select status…" />
+              </SelectTrigger>
+              <SelectContent className="rounded-none border border-line bg-paper">
+                <SelectItem value="None" className="rounded-none">None</SelectItem>
+                <SelectItem value="marketing" className="rounded-none">Marketing</SelectItem>
+                <SelectItem value="All" className="rounded-none">All</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => details && setNewsletterOpen(true)}
+            disabled={!details}
+            className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
+          >
+            View Newsletters
+          </Button>
+        </div>
+
         {/* alerts */}
         {(error || fetchErr) && (
           <Alert className="mt-4 rounded-none border border-line bg-[hsl(var(--muted))]">
@@ -463,7 +515,7 @@ export function UserEditModal({
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !details}
             className="rounded-none bg-ink text-paper hover:bg-ink/90 disabled:opacity-70"
           >
             {saving ? (
@@ -479,6 +531,17 @@ export function UserEditModal({
             )}
           </Button>
         </div>
+
+        {/* Newsletter modal (render only when details are loaded) */}
+        {details && (
+          <NewsletterManagerModal
+            isOpen={newsletterOpen}
+            onClose={() => setNewsletterOpen(false)}
+            userId={details.user_id}
+            userEmail={details.identifiers?.email_address || ""}
+            existingAttributes={details.attributes}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )

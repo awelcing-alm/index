@@ -19,7 +19,7 @@ function toPgTextArrayLiteral(arr: string[]): string {
 
 /** GET /api/groups/membership?user_ids=U1,U2,U3
  *  Returns a map of user_external_id -> { group_id, name, icon } for the active account.
- */
+  */
 export async function GET(req: Request) {
   try {
     const session = await getCurrentUser()
@@ -56,17 +56,17 @@ export async function GET(req: Request) {
     const arrLiteral = toPgTextArrayLiteral(userIds)
 
     const { rows } = await sql/* sql */`
-      SELECT
-        gm.user_external_id,
-        gm.group_id::text AS group_id,
-        g.name,
-        g.icon
-      FROM public.group_memberships gm
-      JOIN public.groups g
-        ON g.id = gm.group_id
-     WHERE gm.account_id = ${accountId}
-       AND gm.user_external_id = ANY(${arrLiteral}::text[])
-    `
+                                                                                                                                                                                SELECT
+                                                                                                                                                                                        gm.user_external_id,
+                                                                                                                                                                                                gm.group_id::text AS group_id,
+                                                                                                                                                                                                        g.name,
+                                                                                                                                                                                                                g.icon
+                                                                                                                                                                                                                      FROM public.group_memberships gm
+                                                                                                                                                                                                                            JOIN public.groups g
+                                                                                                                                                                                                                                    ON g.id = gm.group_id
+                                                                                                                                                                                                                                         WHERE gm.account_id = ${accountId}
+                                                                                                                                                                                                                                                AND gm.user_external_id = ANY(${arrLiteral}::text[])
+                                                                                                                                                                                                                                                    `
 
     const memberships: Record<string, { group_id: string; name: string | null; icon: string | null }> = {}
     for (const r of rows as any[]) {
@@ -77,7 +77,12 @@ export async function GET(req: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, memberships })
+    {
+      const res = NextResponse.json({ ok: true, memberships })
+      // short client cache; still fresh enough for UI and prevents hammering
+      res.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=60")
+      return res
+    }
   } catch (err: any) {
     return NextResponse.json({ ok: false, error: err?.message || "Failed to load memberships" }, { status: 500 })
   }
@@ -110,8 +115,8 @@ export async function POST(req: Request) {
     const accountByGroup = new Map<string, string>()
     for (const gid of groupIds) {
       const { rows } = await sql/* sql */`
-        SELECT account_id FROM public.groups WHERE id = ${gid}::uuid
-      `
+                                                                                                                                                                                                                                                                                                                                                                                                                  SELECT account_id FROM public.groups WHERE id = ${gid}::uuid
+                                                                                                                                                                                                                                                                                                                                                                                                                        `
       const acct = rows?.[0]?.account_id as string | undefined
       if (acct) accountByGroup.set(gid, acct)
     }
@@ -126,18 +131,18 @@ export async function POST(req: Request) {
       if (!acct) continue
 
       await sql/* sql */`
-        INSERT INTO public.group_memberships (account_id, group_id, user_external_id, assigned_at)
-        VALUES (${acct}, ${gid}::uuid, ${uid}, now())
-        ON CONFLICT (account_id, user_external_id)
-        DO UPDATE SET group_id = EXCLUDED.group_id, assigned_at = now()
-      `
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          INSERT INTO public.group_memberships (account_id, group_id, user_external_id, assigned_at)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  VALUES (${acct}, ${gid}::uuid, ${uid}, now())
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ON CONFLICT (account_id, user_external_id)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  DO UPDATE SET group_id = EXCLUDED.group_id, assigned_at = now()
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        `
 
       await sql/* sql */`
-        UPDATE public.users
-           SET group_id = ${gid}::uuid,
-               updated_at = now()
-         WHERE external_id = ${uid}
-      `
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      UPDATE public.users
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 SET group_id = ${gid}::uuid,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                updated_at = now()
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         WHERE external_id = ${uid}
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               `
     }
 
     // 2) Optionally apply count deltas (safe even if empty)
@@ -147,10 +152,10 @@ export async function POST(req: Request) {
 
     for (const { id, delta } of clean) {
       await sql/* sql */`
-        UPDATE public.groups
-           SET user_count = GREATEST(0, COALESCE(user_count, 0) + ${delta})
-         WHERE id = ${id}::uuid
-      `
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         UPDATE public.groups
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    SET user_count = GREATEST(0, COALESCE(user_count, 0) + ${delta})
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             WHERE id = ${id}::uuid
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   `
     }
 
     await sql/* sql */`COMMIT`
@@ -158,7 +163,7 @@ export async function POST(req: Request) {
     const deltas = Object.fromEntries(changes.map((c) => [c.id, c.delta]))
     return NextResponse.json({ ok: true, deltas })
   } catch (err: any) {
-    try { await sql/* sql */`ROLLBACK` } catch {}
+    try { await sql/* sql */`ROLLBACK` } catch { }
     const msg = err?.message || "Failed to persist membership"
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }

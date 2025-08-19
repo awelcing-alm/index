@@ -2,7 +2,12 @@
 "use client"
 
 import React, {
-  useState, useEffect, useMemo, useCallback, useTransition, type DragEvent,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useTransition,
+  type DragEvent,
 } from "react"
 
 import {
@@ -29,6 +34,7 @@ import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
+import { useMemberships } from "@/components/hooks/useMemberships" // <- uses { memberships, isLoading }
 
 type GroupWithCount = Group & { user_count?: number }
 type UiUser = {
@@ -47,7 +53,6 @@ const GROUP_ICON_EMOJI: Record<string, string> = {
   folder: "🗂️", book: "📘",
 }
 
-/** Ensure <tr> has only element children (prevents whitespace hydration errors). */
 const StrictRow = ({
   className,
   children,
@@ -111,6 +116,10 @@ export default function UsersTable({
   const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
   const goLast  = () => setPage(pageCount - 1)
 
+  /* ---------------- memberships (deduped; no spam) ---------------- */
+  // ✅ Correct usage/signature + property names
+  const { memberships, isLoading: mLoading } = useMemberships(pageUserIds)
+
   /* ---------------- groups lookup maps ---------------- */
   const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
   const groupByNameLower = useMemo(
@@ -123,10 +132,13 @@ export default function UsersTable({
     [groups]
   )
 
-  /** Resolve a group for a row using id/name/slug from row or attributes (stable across refresh). */
   const resolveGroupForRow = useCallback(
     (row: UiUser): GroupWithCount | null => {
+      const m = memberships?.[row.user_id]
+      if (m?.group_id && groupById[m.group_id]) return groupById[m.group_id]
+
       if (row.group_id && groupById[row.group_id]) return groupById[row.group_id]
+
       const raw = getRawGroupValue(row)
       if (!raw) return null
       const v = raw.trim()
@@ -140,7 +152,7 @@ export default function UsersTable({
       if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
       return null
     },
-    [groupById, groupByNameLower, groupBySlug, groupBySlugifiedName]
+    [memberships, groupById, groupByNameLower, groupBySlug, groupBySlugifiedName]
   )
 
   /* ---------------- persistent counts (seeded from DB) ---------------- */
@@ -170,7 +182,6 @@ export default function UsersTable({
       return new Set([...p, ...onPageIds])
     })
 
-  /** Normalize demographics from a group (supports underscore or hyphen keys). */
   const extractDemographicAttrs = (g: GroupWithCount) => {
     const d = (g?.demographics || {}) as any
     return {
@@ -180,41 +191,6 @@ export default function UsersTable({
     }
   }
 
-  /** Fetch DB memberships for the *current page* → annotate rows so icons persist. */
-  const refreshMemberships = useCallback(async (userIds: string[]) => {
-    if (!userIds.length) return
-    try {
-      // Uses existing GET reader: /api/groups/membership?user_ids=U1,U2,...
-      const qs = encodeURIComponent(userIds.join(","))
-      const res = await fetch(`/api/groups/membership?user_ids=${qs}`, { cache: "no-store" })
-      if (!res.ok) return
-      const payload = await res.json() as {
-        ok: boolean,
-        memberships: Record<string, { group_id: string, name: string | null, icon: string | null }>
-      }
-      if (!payload?.ok) return
-      const byUser = payload.memberships || {}
-      startTransition(() => {
-        setRows(prev =>
-          prev.map(u => {
-            const m = byUser[u.user_id]
-            return m
-              ? { ...u, group_id: m.group_id, group_icon: m.icon, group_name: m.name ?? undefined }
-              : u
-          })
-        )
-      })
-    } catch (e) {
-      console.error("refreshMemberships failed", e)
-    }
-  }, [])
-
-  // hydrate icons for each page
-  useEffect(() => {
-    refreshMemberships(pageUserIds)
-  }, [refreshMemberships, pageUserIds])
-
-  /** Compute and apply counts optimistically. Keys are group IDs. */
   const applyCountDeltasLocal = (deltas: Record<string, number>) => {
     if (!Object.keys(deltas).length) return
     setCounts((prev) => {
@@ -230,12 +206,11 @@ export default function UsersTable({
     if (!userIds.length) return
     const g = groupById[targetGroupId]; if (!g) return
 
-    // Build deltas: +N to target, -1 for each old group (when different)
     const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
     const oldIds = new Set<string>()
     for (const u of rows) {
       if (!userIds.includes(u.user_id)) continue
-      const old = u.group_id
+      const old = memberships?.[u.user_id]?.group_id ?? u.group_id
       if (old && old !== targetGroupId) oldIds.add(old)
     }
     for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
@@ -244,14 +219,12 @@ export default function UsersTable({
 
     setLoading(true); setError(null)
     try {
-      // 1) Patch Zephr attributes
       await Promise.all(
         userIds.map((uid) =>
           updateUserAttributesAction(uid, { group: g.name, ...demo }),
         ),
       )
 
-      // 2) Persist membership + counts
       const payload = {
         assignments: userIds.map((uid) => ({ user_id: uid, group_id: targetGroupId })),
         changes: Object.entries(deltas).map(([id, delta]) => ({ id, delta })),
@@ -266,7 +239,6 @@ export default function UsersTable({
         throw new Error(data?.error || "Failed to persist membership")
       }
 
-      // 3) Optimistic UI update
       startTransition(() =>
         setRows((prev) =>
           prev.map((u) =>
@@ -283,12 +255,8 @@ export default function UsersTable({
         ),
       )
 
-      // 4) Counts
       const serverDeltas: Record<string, number> | undefined = data?.deltas
       applyCountDeltasLocal(serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas)
-
-      // 5) Re-hydrate for current page so icons persist reliably
-      await refreshMemberships(pageUserIds)
 
       setSelected(new Set())
     } catch (e: any) {
@@ -391,11 +359,11 @@ export default function UsersTable({
   }
 
   const GroupIconCell = ({ row }: { row: UiUser }) => {
-    const g = resolveGroupForRow(row)
-    if (!g && !row.group_icon) return <span className="text-[hsl(var(--muted-foreground))]">—</span>
-    const iconKey = (row.group_icon ?? g?.icon ?? "") as string
+    const m = memberships?.[row.user_id]
+    const g = m?.group_id ? groupById[m.group_id] : resolveGroupForRow(row)
+    const iconKey = (m?.icon ?? row.group_icon ?? g?.icon ?? "") as string
     const icon = GROUP_ICON_EMOJI[iconKey] ?? "📁"
-    const title = g?.name ?? row.group_name ?? "Group"
+    const title = g?.name ?? m?.name ?? row.group_name ?? "Group"
     return (
       <span className="text-lg leading-none" title={title} aria-label={title}>
         {icon}
@@ -443,7 +411,7 @@ export default function UsersTable({
             </SelectContent>
           </Select>
 
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />}
+          {(loading || mLoading) && <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />}
         </div>
       )}
 

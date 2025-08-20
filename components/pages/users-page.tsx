@@ -3,15 +3,16 @@ import { Suspense } from "react"
 
 /* ---------- server helpers ---------- */
 import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
-import { listGroups, type Group } from "@/lib/groups"
+import { listGroups } from "@/lib/groups"
 
 /* ---------- ui ---------- */
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 
-/* ---------- client component ---------- */
-import UsersTable from "./users-table"
+/* ---------- client table (refactored) ---------- */
+import { UsersTable } from "./users-table/index"
+import type { UiUser, GroupWithCount } from "./users-table/types"
 
 async function UsersPage() {
   const session = await getCurrentUser()
@@ -34,11 +35,14 @@ async function UsersPage() {
 
   const [usersRes, groupsRes] = await Promise.allSettled([
     getUsersForCurrentAccount(),
-    listGroups(accountId as string),
+    listGroups(accountId),
   ])
 
-  const users = usersRes.status === "fulfilled" ? usersRes.value : ([] as any[])
-  const groups = (groupsRes.status === "fulfilled" ? groupsRes.value : []) as Group[]
+  const users: UiUser[] =
+    usersRes.status === "fulfilled" ? (usersRes.value as UiUser[]) : []
+  const groups: GroupWithCount[] =
+    groupsRes.status === "fulfilled" ? (groupsRes.value as GroupWithCount[]) : []
+
   const loadError =
     usersRes.status === "rejected"
       ? usersRes.reason?.message ?? "Unknown error"
@@ -57,9 +61,7 @@ async function UsersPage() {
         {loadError ? (
           <Alert variant="destructive" className="rounded-none">
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription>
-              Failed to load users: {loadError}
-            </AlertDescription>
+            <AlertDescription>Failed to load users: {loadError}</AlertDescription>
           </Alert>
         ) : (
           <Suspense

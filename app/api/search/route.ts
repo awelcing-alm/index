@@ -1,18 +1,36 @@
-// app/api/search/route.ts
 import { NextResponse } from "next/server"
 import { sql } from "@/lib/db"
 import { getCurrentUser } from "@/lib/auth-actions"
 
 /**
- * GET /api/search?q=term&limit=8
+ * GET /api/search?q=term&limit=8&only=users|groups|templates
  * Response: { users: [], groups: [], templates: [] }
  */
 export async function GET(req: Request) {
-  const { searchParams, origin } = new URL(req.url)
-  const q = (searchParams.get("q") || "").trim()
+  const url = new URL(req.url)
+  const { searchParams } = url
+
+  const qRaw = (searchParams.get("q") || "").trim()
   const limit = Math.min(Math.max(Number(searchParams.get("limit") || 8), 1), 25)
 
-  if (!q) {
+  // scope parsing: only=users,groups,templates (comma-separated or single)
+  const onlyParam = (searchParams.get("only") || "").trim().toLowerCase()
+  const scopeList = onlyParam
+    ? Array.from(
+        new Set(
+          onlyParam
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        )
+      )
+    : []
+  const wantUsers = scopeList.length === 0 || scopeList.includes("users")
+  const wantGroups = scopeList.length === 0 || scopeList.includes("groups")
+  const wantTemplates = scopeList.length === 0 || scopeList.includes("templates")
+
+  // If no query, return empty shells
+  if (!qRaw) {
     return NextResponse.json({ users: [], groups: [], templates: [] })
   }
 
@@ -28,55 +46,84 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "No active account" }, { status: 400 })
   }
 
-  const like = `%${q}%`
+  const like = `%${qRaw}%`
+  const looksEmail = qRaw.includes("@")
 
-  // ---- Groups (definite)
-  const { rows: groupRows } = await sql/* sql */`
-    SELECT id::text AS id, name, icon, slug
-    FROM public.groups
-    WHERE account_id = ${accountId}
-      AND (name ILIKE ${like} OR slug ILIKE ${like})
-    ORDER BY name ASC
-    LIMIT ${limit};
-  `
+  // Prepare response buckets; populate section-by-section (soft-fail)
+  let users: Array<{ user_id: string; email: string | null; firstname: string | null; lastname: string | null }> = []
+  let groups: Array<{ id: string; name: string; icon: string | null; slug: string | null }> = []
+  let templates: Array<{ name: string }> = []
 
-  // ---- Users (best-effort: email + firstname/lastname in JSONB)
-  // Notes:
-  //  - Works if your table has either `email` column OR `identifiers` JSONB with email_address.
-  //  - Safe to ship; adjust selectors if your schema differs.
-  const { rows: userRows } = await sql/* sql */`
-    SELECT
-      external_id::text AS user_id,
-      COALESCE(email, (identifiers->>'email_address')) AS email,
-      attributes
-    FROM public.users
-    WHERE account_id = ${accountId}
-      AND (
-        COALESCE(email, (identifiers->>'email_address')) ILIKE ${like}
-        OR (attributes->>'firstname') ILIKE ${like}
-        OR (attributes->>'lastname') ILIKE ${like}
-      )
-    ORDER BY updated_at DESC NULLS LAST
-    LIMIT ${limit};
-  `
+  // ---- Users (JSONB-first; avoids referencing non-existent plain `email` column)
+  if (wantUsers) {
+    try {
+      // If it's email-ish, bias strongly to email ILIKE; otherwise include name matches too.
+      const { rows } = await sql/* sql */`
+        SELECT
+          external_id::text AS user_id,
+          (identifiers->>'email_address') AS email,
+          attributes
+        FROM public.users
+        WHERE account_id = ${accountId}
+          AND (
+            (identifiers->>'email_address') ILIKE ${like}
+            ${looksEmail ? sql`` : sql/* sql */`OR (attributes->>'firstname') ILIKE ${like} OR (attributes->>'lastname') ILIKE ${like}`}
+          )
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT ${limit};
+      `
 
-  // ---- Templates (via local API to reuse existing store)
-  // We call our own templates endpoint to avoid duplicating its storage logic.
-  const namesRes = await fetch(`${origin}/api/templates`, { cache: "no-store" }).catch(() => null)
-  const templateNames: string[] = namesRes && namesRes.ok ? await namesRes.json() : []
-  const filteredTpls = templateNames
-    .filter((n) => n.toLowerCase().includes(q.toLowerCase()))
-    .slice(0, limit)
-    .map((name) => ({ name }))
+      users = (rows as any[]).map((r) => ({
+        user_id: r.user_id,
+        email: r.email ?? null,
+        firstname: r.attributes?.firstname ?? null,
+        lastname: r.attributes?.lastname ?? r.attributes?.surname ?? null,
+      }))
+    } catch (e) {
+      // Soft-fail: leave users empty
+      users = []
+    }
+  }
 
-  return NextResponse.json({
-    users: (userRows as any[]).map((r) => ({
-      user_id: r.user_id,
-      email: r.email,
-      firstname: r.attributes?.firstname ?? null,
-      lastname: r.attributes?.lastname ?? r.attributes?.surname ?? null,
-    })),
-    groups: groupRows as any[],
-    templates: filteredTpls,
-  })
+  // ---- Groups
+  if (wantGroups) {
+    try {
+      const { rows } = await sql/* sql */`
+        SELECT id::text AS id, name, icon, slug
+        FROM public.groups
+        WHERE account_id = ${accountId}
+          AND (name ILIKE ${like} OR slug ILIKE ${like})
+        ORDER BY name ASC
+        LIMIT ${limit};
+      `
+      groups = rows as any[]
+    } catch (e) {
+      groups = []
+    }
+  }
+
+  // ---- Templates (forward cookie so auth is preserved)
+  if (wantTemplates) {
+    try {
+      const namesRes = await fetch(new URL("/api/templates", url).toString(), {
+        cache: "no-store",
+        headers: {
+          // forward cookies so /api/templates can authenticate this internal call
+          cookie: (req.headers as any).get?.("cookie") ?? "",
+        },
+        // Next.js: ensure it's not cached at the edge
+        next: { revalidate: 0 },
+      }).catch(() => null)
+
+      const templateNames: string[] = namesRes && namesRes.ok ? await namesRes.json() : []
+      templates = templateNames
+        .filter((n) => n.toLowerCase().includes(qRaw.toLowerCase()))
+        .slice(0, limit)
+        .map((name) => ({ name }))
+    } catch (e) {
+      templates = []
+    }
+  }
+
+  return NextResponse.json({ users, groups, templates })
 }

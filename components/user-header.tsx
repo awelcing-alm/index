@@ -2,7 +2,6 @@ import { getCurrentUser, logoutUser } from "@/lib/auth-actions";
 import { Button } from "@/components/ui/button";
 import { LogOut, Shield, Building } from "lucide-react";
 import { AccountSwitcher } from "@/components/account-switcher";
-import AppSearch from "@/components/app-search";
 
 export async function UserHeader() {
   const user = await getCurrentUser();
@@ -40,9 +39,6 @@ export async function UserHeader() {
               </div>
             </div>
           ) : null}
-        </div>
-        <div className="w-full flex items-center justify-center">
-          <AppSearch />
         </div>
 
         {/* Right side: actions */}

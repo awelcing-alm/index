@@ -2,13 +2,22 @@
 "use client"
 
 import React, {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useTransition,
-  type DragEvent,
+  useState, useEffect, useMemo, useCallback, useTransition, type DragEvent,
 } from "react"
+
+import {
+  useReactTable,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  getPaginationRowModel,
+  flexRender,
+  createColumnHelper,
+  type ColumnDef,
+  type FilterFn,
+} from "@tanstack/react-table"
+
+import type { RowSelectionState } from "@tanstack/react-table"
 
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -17,6 +26,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Input } from "@/components/ui/input"
 import {
   Select, SelectTrigger, SelectValue, SelectItem, SelectContent,
 } from "@/components/ui/select"
@@ -26,7 +36,7 @@ import {
 
 import {
   Crown, User as UserIcon, Users as UsersIcon,
-  Folder, Loader2, ChevronLeft, ChevronRight,
+  Folder, Loader2, ChevronLeft, ChevronRight, Filter as FilterIcon, X,
 } from "lucide-react"
 
 import { getActiveAccountId } from "@/lib/account-store"
@@ -34,7 +44,6 @@ import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
-import { useMemberships } from "@/components/hooks/useMemberships" // <- uses { memberships, isLoading }
 
 type GroupWithCount = Group & { user_count?: number }
 type UiUser = {
@@ -53,6 +62,7 @@ const GROUP_ICON_EMOJI: Record<string, string> = {
   folder: "🗂️", book: "📘",
 }
 
+/** Ensure <tr> has only element children (prevents whitespace hydration errors). */
 const StrictRow = ({
   className,
   children,
@@ -89,56 +99,30 @@ function getRawGroupValue(u: UiUser): string | null {
   return null
 }
 
-export default function UsersTable({
-  users,
-  groups,
-}: {
-  users: UiUser[]
-  groups: GroupWithCount[]
-}) {
+/* ---------------- component ---------------- */
+export default function UsersTable({ users, groups }: { users: UiUser[]; groups: GroupWithCount[] }) {
   const accountId = getActiveAccountId()
 
-  /* ---------------- data & pagination ---------------- */
+  /* ---------------- data source ---------------- */
   const [rows, setRows] = useState(users)
   useEffect(() => setRows(users), [users])
 
-  const PER_PAGE = 25
-  const [page, setPage] = useState(0)
-  const pageCount = Math.ceil(rows.length / PER_PAGE)
-  const pagedRows = useMemo(
-    () => rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE),
-    [rows, page]
-  )
-  const pageUserIds = useMemo(() => pagedRows.map((u) => u.user_id), [pagedRows])
-
-  const goFirst = () => setPage(0)
-  const goPrev  = () => setPage((p) => Math.max(0, p - 1))
-  const goNext  = () => setPage((p) => Math.min(pageCount - 1, p + 1))
-  const goLast  = () => setPage(pageCount - 1)
-
-  /* ---------------- memberships (deduped; no spam) ---------------- */
-  // ✅ Correct usage/signature + property names
-  const { memberships, isLoading: mLoading } = useMemberships(pageUserIds)
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 
   /* ---------------- groups lookup maps ---------------- */
-  const groupById   = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
+  const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
   const groupByNameLower = useMemo(
     () => Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g])),
     [groups]
   )
   const groupBySlug = useMemo(() => Object.fromEntries(groups.map((g) => [g.slug, g])), [groups])
   const groupBySlugifiedName = useMemo(
-    () => Object.fromEntries(groups.map((g) => [slugify(g.name), g])),
-    [groups]
+    () => Object.fromEntries(groups.map((g) => [slugify(g.name), g])), [groups]
   )
 
   const resolveGroupForRow = useCallback(
     (row: UiUser): GroupWithCount | null => {
-      const m = memberships?.[row.user_id]
-      if (m?.group_id && groupById[m.group_id]) return groupById[m.group_id]
-
       if (row.group_id && groupById[row.group_id]) return groupById[row.group_id]
-
       const raw = getRawGroupValue(row)
       if (!raw) return null
       const v = raw.trim()
@@ -152,7 +136,7 @@ export default function UsersTable({
       if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
       return null
     },
-    [memberships, groupById, groupByNameLower, groupBySlug, groupBySlugifiedName]
+    [groupById, groupByNameLower, groupBySlug, groupBySlugifiedName]
   )
 
   /* ---------------- persistent counts (seeded from DB) ---------------- */
@@ -163,24 +147,239 @@ export default function UsersTable({
     setCounts(Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0])))
   }, [groups])
 
-  /* ---------------- selection & misc ---------------- */
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  /* ---------------- selection / UI state ---------------- */
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [, startTransition] = useTransition()
 
-  const toggle = (id: string) => setSelected((p) => {
-    const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n
-  })
-  const toggleAllOnPage = () =>
-    setSelected((p) => {
-      const onPageIds = pagedRows.map((u) => u.user_id)
-      const allSelected = onPageIds.every((id) => p.has(id))
-      if (allSelected) {
-        const n = new Set(p); onPageIds.forEach((id) => n.delete(id)); return n
+  /* ---------------- memberships hydration ---------------- */
+  const refreshMemberships = useCallback(async (userIds: string[]) => {
+    if (!userIds.length) return
+    try {
+      const qs = encodeURIComponent(userIds.join(","))
+      const res = await fetch(`/api/groups/membership?user_ids=${qs}`, { cache: "no-store" })
+      if (!res.ok) return
+      const payload = await res.json() as {
+        ok: boolean,
+        memberships: Record<string, { group_id: string, name: string | null, icon: string | null }>
       }
-      return new Set([...p, ...onPageIds])
+      if (!payload?.ok) return
+      const byUser = payload.memberships || {}
+      startTransition(() => {
+        setRows(prev =>
+          prev.map(u => {
+            const m = byUser[u.user_id]
+            return m
+              ? { ...u, group_id: m.group_id, group_icon: m.icon, group_name: m.name ?? undefined }
+              : u
+          })
+        )
+      })
+    } catch (e) {
+      console.error("refreshMemberships failed", e)
+    }
+  }, [])
+
+  /* ---------------- TanStack Table setup ---------------- */
+  const PER_PAGE = 25
+
+  // Global filter on (name OR email)
+  const globalFilterFn: FilterFn<UiUser> = (row, _columnId, filterValue) => {
+    const q = String(filterValue ?? "").trim().toLowerCase()
+    if (!q) return true
+    const email = (row.original.identifiers?.email_address || "").toLowerCase()
+    const fn = String(row.original.attributes?.firstname || "").toLowerCase()
+    const ln = String(row.original.attributes?.lastname || row.original.attributes?.surname || "").toLowerCase()
+    const name = `${fn} ${ln}`.trim()
+    return email.includes(q) || name.includes(q)
+  }
+
+  const col = createColumnHelper<UiUser>()
+  const columns: ColumnDef<UiUser, any>[] = [
+    // Selection column
+    {
+      id: "select",
+      header: ({ table }) => (
+        <Checkbox
+          className="rounded-none"
+          checked={table.getIsAllPageRowsSelected()}
+          onCheckedChange={(v) => setAllOnPage(v === true)}   // CHANGED
+          aria-label="Select all on page"
+        />
+      ),
+
+      cell: ({ row }) => (
+        <Checkbox
+          className="rounded-none"
+          checked={row.getIsSelected()}
+          onCheckedChange={(v) => row.toggleSelected(v === true)}
+          aria-label={`Select ${row.original.identifiers?.email_address}`}
+        />
+      ),
+      enableSorting: false,
+      enableHiding: false,
+      size: 36,
+    },
+
+    // Name
+    col.display({
+      id: "name",
+      header: () => <span className="text-ink">User</span>,
+      cell: ({ row }) => {
+        const u = row.original
+        const fn = u.attributes?.firstname || ""
+        const ln = u.attributes?.lastname || u.attributes?.surname || ""
+        const displayName = fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
+        return <span className="font-medium text-ink">{displayName}</span>
+      },
+      sortingFn: (a, b) => {
+        const get = (u: UiUser) => {
+          const fn = u.attributes?.firstname || ""
+          const ln = u.attributes?.lastname || u.attributes?.surname || ""
+          return (fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address).toLowerCase()
+        }
+        return get(a.original).localeCompare(get(b.original))
+      },
+    }),
+
+    // Email
+    col.accessor((u) => u.identifiers.email_address, {
+      id: "email",
+      header: () => <span className="text-ink">Email</span>,
+      cell: (ctx) => {
+        const email = ctx.getValue() as string
+        return (
+          <button
+            onClick={async () => {
+              try { await navigator.clipboard.writeText(email) } catch { }
+            }}
+            className="underline decoration-dotted text-[hsl(var(--muted-foreground))] hover:opacity-80"
+            title="Click to copy"
+            type="button"
+          >
+            {email}
+          </button>
+        )
+      },
+      enableColumnFilter: true,
+      filterFn: "includesString",
+    }),
+
+    // Group (resolved)
+    col.display({
+      id: "group",
+      header: () => <span className="text-ink">Group</span>,
+      cell: ({ row }) => {
+        const u = row.original
+        const g = resolveGroupForRow(u)
+        const iconKey = (u.group_icon ?? g?.icon ?? "") as string
+        const icon = GROUP_ICON_EMOJI[iconKey] ?? "📁"
+        const title = g?.name ?? u.group_name ?? "Group"
+        return (
+          <span className="text-lg leading-none" title={title} aria-label={title}>
+            {icon}
+          </span>
+        )
+      },
+      // Use resolved group id as filter value
+      enableColumnFilter: true,
+      filterFn: (row, _id, value: string) => {
+        if (!value) return true
+        const u = row.original
+        const g = resolveGroupForRow(u)
+        return (g?.id ?? "") === value
+      },
+    }),
+
+    // Role
+    col.accessor((u) => u.user_type === "owner" ? "Owner" : "User", {
+      id: "role",
+      header: () => <span className="text-ink">Role</span>,
+      cell: ({ getValue }) => {
+        const label = getValue() as string
+        return label === "Owner" ? (
+          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
+            <Crown className="h-3 w-3" /> Owner
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
+            <UserIcon className="h-3 w-3" /> User
+          </Badge>
+        )
+      },
+      enableColumnFilter: true,
+      filterFn: "equalsString",
+    }),
+
+    // Edit
+    col.display({
+      id: "edit",
+      header: () => <span className="text-ink">Edit</span>,
+      cell: ({ row }) => {
+        const u = row.original
+        return (
+          <UserEditButton
+            userId={u.user_id}
+            userEmail={u.identifiers.email_address}
+            existingAttributes={u.attributes}
+            groups={groups}
+          />
+        )
+      },
+      enableSorting: false,
+      enableColumnFilter: false,
+      size: 72,
+    }),
+  ]
+
+  const table = useReactTable({
+    data: rows,
+    columns,
+    getRowId: (row) => row.user_id,
+    enableRowSelection: true,
+    state: {
+      rowSelection,
+      pagination: { pageIndex: 0, pageSize: PER_PAGE },
+    },
+    onRowSelectionChange: setRowSelection,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    globalFilterFn,
+  })
+
+  // Select / clear all rows on the current page in a single state update
+  const setAllOnPage = (checked: boolean) => {
+    setRowSelection((prev) => {
+      if (!checked) {
+        // Clear: remove only the current page row ids
+        const next = { ...prev }
+        for (const r of table.getRowModel().rows) delete next[r.id]
+        return next
+      }
+      // Select: add only the current page row ids
+      const next = { ...prev }
+      for (const r of table.getRowModel().rows) next[r.id] = true
+      return next
     })
+  }
+
+
+  // hydrate memberships for the current page
+  const { pageIndex, pageSize } = table.getState().pagination
+  const sorting = table.getState().sorting
+  const columnFilters = table.getState().columnFilters
+  const globalFilter = table.getState().globalFilter
+
+  useEffect(() => {
+    const ids = table.getRowModel().rows.map((r) => r.original.user_id)
+    refreshMemberships(ids)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageIndex, pageSize, sorting, columnFilters, globalFilter, rows])
+
+  /* ---------------- actions (assign/template) ---------------- */
+  const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.user_id)
 
   const extractDemographicAttrs = (g: GroupWithCount) => {
     const d = (g?.demographics || {}) as any
@@ -206,11 +405,12 @@ export default function UsersTable({
     if (!userIds.length) return
     const g = groupById[targetGroupId]; if (!g) return
 
+    // Build deltas: +N to target, -1 for each old group (when different)
     const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
     const oldIds = new Set<string>()
     for (const u of rows) {
       if (!userIds.includes(u.user_id)) continue
-      const old = memberships?.[u.user_id]?.group_id ?? u.group_id
+      const old = u.group_id
       if (old && old !== targetGroupId) oldIds.add(old)
     }
     for (const id of oldIds) deltas[id] = (deltas[id] ?? 0) - 1
@@ -219,12 +419,14 @@ export default function UsersTable({
 
     setLoading(true); setError(null)
     try {
+      // 1) Patch Zephr attributes
       await Promise.all(
         userIds.map((uid) =>
           updateUserAttributesAction(uid, { group: g.name, ...demo }),
         ),
       )
 
+      // 2) Persist membership + counts
       const payload = {
         assignments: userIds.map((uid) => ({ user_id: uid, group_id: targetGroupId })),
         changes: Object.entries(deltas).map(([id, delta]) => ({ id, delta })),
@@ -239,26 +441,30 @@ export default function UsersTable({
         throw new Error(data?.error || "Failed to persist membership")
       }
 
-      startTransition(() =>
-        setRows((prev) =>
-          prev.map((u) =>
-            userIds.includes(u.user_id)
-              ? {
-                  ...u,
-                  group_id: g.id,
-                  group_icon: g.icon,
-                  group_name: g.name,
-                  attributes: { ...u.attributes, group: g.name, ...demo },
-                }
-              : u
-          ),
+      // 3) Optimistic UI update
+      setRows((prev) =>
+        prev.map((u) =>
+          userIds.includes(u.user_id)
+            ? {
+              ...u,
+              group_id: g.id,
+              group_icon: g.icon,
+              group_name: g.name,
+              attributes: { ...u.attributes, group: g.name, ...demo },
+            }
+            : u
         ),
       )
 
+      // 4) Counts
       const serverDeltas: Record<string, number> | undefined = data?.deltas
       applyCountDeltasLocal(serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas)
 
-      setSelected(new Set())
+      // 5) Re-hydrate for current page
+      const ids = table.getRowModel().rows.map((r) => r.original.user_id)
+      await refreshMemberships(ids)
+
+      table.resetRowSelection()
     } catch (e: any) {
       console.error(e)
       setError(e?.message ?? "Group assign failed")
@@ -268,10 +474,9 @@ export default function UsersTable({
   }
 
   async function applyGroup(targetGroupId: string) {
-    await assignToGroup(targetGroupId, Array.from(selected))
+    await assignToGroup(targetGroupId, selectedIds)
   }
 
-  /* ---------------- templates bulk ---------------- */
   const fetchTemplateNames = async () =>
     (await fetch("/api/templates")).json() as Promise<string[]>
 
@@ -283,17 +488,17 @@ export default function UsersTable({
   }
 
   async function applyTemplate(templateName: string) {
-    if (!selected.size) return
+    if (!selectedIds.length) return
     setLoading(true); setError(null)
     try {
       const tpl = await fetchTemplate(templateName)
       if (!tpl) throw new Error("Template not found")
       await Promise.all(
-        Array.from(selected).map((uid) =>
+        selectedIds.map((uid) =>
           updateUserAttributesAction(uid, tpl.attributes),
         ),
       )
-      setSelected(new Set())
+      table.resetRowSelection()
     } catch (e: any) {
       setError(e?.message ?? "Bulk template failed")
     } finally {
@@ -306,70 +511,23 @@ export default function UsersTable({
     e.dataTransfer.setData("text/plain", userId)
     e.dataTransfer.effectAllowed = "move"
   }, [])
-
   const onDragOver = useCallback((e: DragEvent) => {
     e.preventDefault(); e.dataTransfer.dropEffect = "move"
   }, [])
-
   const onDrop = useCallback(
     async (e: DragEvent, targetGroupId: string) => {
       e.preventDefault()
       const draggedId = e.dataTransfer.getData("text/plain")
-      const ids = selected.has(draggedId) ? Array.from(selected) : [draggedId]
+      const ids = selectedIds.includes(draggedId) ? selectedIds : [draggedId]
       await assignToGroup(targetGroupId, ids)
     },
-    [selected, assignToGroup]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedIds]
   )
 
-  /* ---------------- misc helpers ---------------- */
-  const DynamicTemplateOptions = () => {
-    const [names, setNames] = useState<string[]>([])
-    useEffect(() => { fetchTemplateNames().then(setNames).catch(console.error) }, [])
-    return (
-      <>
-        {names.map((n) => (
-          <SelectItem key={n} value={n}>
-            {n}
-          </SelectItem>
-        ))}
-      </>
-    )
-  }
-
-  const EmailCopy = ({ email }: { email: string }) => {
-    const [copied, setCopied] = useState(false)
-    const copy = async () => {
-      try {
-        await navigator.clipboard.writeText(email)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1200)
-      } catch {}
-    }
-    return (
-      <button
-        onClick={copy}
-        className="underline decoration-dotted hover:opacity-80"
-        title="Click to copy"
-        type="button"
-      >
-        {email}
-        {copied && <span className="ml-2 text-xs text-green-700">Copied</span>}
-      </button>
-    )
-  }
-
-  const GroupIconCell = ({ row }: { row: UiUser }) => {
-    const m = memberships?.[row.user_id]
-    const g = m?.group_id ? groupById[m.group_id] : resolveGroupForRow(row)
-    const iconKey = (m?.icon ?? row.group_icon ?? g?.icon ?? "") as string
-    const icon = GROUP_ICON_EMOJI[iconKey] ?? "📁"
-    const title = g?.name ?? m?.name ?? row.group_name ?? "Group"
-    return (
-      <span className="text-lg leading-none" title={title} aria-label={title}>
-        {icon}
-      </span>
-    )
-  }
+  /* ---------------- toolbar (filters) ---------------- */
+  const [showFilters, setShowFilters] = useState(true)
+  const ALL = "__ALL__"
 
   /* ---------------- UI ---------------- */
   return (
@@ -380,9 +538,9 @@ export default function UsersTable({
         </Alert>
       )}
 
-      {selected.size > 0 && (
+      {table.getSelectedRowModel().rows.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted))] p-3">
-          <p className="text-sm text-ink">{selected.size} selected</p>
+          <p className="text-sm text-ink">{table.getSelectedRowModel().rows.length} selected</p>
 
           <Select onValueChange={applyGroup} disabled={loading}>
             <SelectTrigger className="h-8 w-48 rounded-none border border-line bg-paper text-ink">
@@ -407,13 +565,87 @@ export default function UsersTable({
                   {t.name}
                 </SelectItem>
               ))}
-              <DynamicTemplateOptions />
             </SelectContent>
           </Select>
 
-          {(loading || mLoading) && <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />}
+          {loading && <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />}
         </div>
       )}
+
+      {/* Toolbar: global search + column filters */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
+          <FilterIcon className="h-4 w-4 text-[hsl(var(--muted-foreground))]" />
+          <Input
+            placeholder="Search name or email…"
+            value={(table.getState().globalFilter as string) ?? ""}
+            onChange={(e) => table.setGlobalFilter(e.target.value)}
+            className="h-8 w-72 rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
+          />
+          {table.getState().globalFilter ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => table.setGlobalFilter("")}
+              className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">Clear</span>
+            </Button>
+          ) : null}
+        </div>
+
+        {showFilters && (
+          <>
+            {/* Group filter */}
+            <Select
+              value={((table.getColumn("group")?.getFilterValue() as string) ?? ALL)}
+              onValueChange={(v) =>
+                table.getColumn("group")?.setFilterValue(v === ALL ? undefined : v)
+              }
+            >
+              <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
+                <SelectValue placeholder="Filter by group" />
+              </SelectTrigger>
+              <SelectContent className="max-h-64 overflow-y-auto rounded-none border border-line bg-paper">
+                <SelectItem value={ALL} className="rounded-none">All groups</SelectItem>
+                {groups.map((g) => (
+                  <SelectItem key={g.id} value={g.id} className="rounded-none">
+                    {g.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Role filter */}
+            <Select
+              value={((table.getColumn("role")?.getFilterValue() as string) ?? ALL)}
+              onValueChange={(v) =>
+                table.getColumn("role")?.setFilterValue(v === ALL ? undefined : v)
+              }
+            >
+              <SelectTrigger className="h-8 w-44 rounded-none border border-line bg-paper text-ink">
+                <SelectValue placeholder="Filter by role" />
+              </SelectTrigger>
+              <SelectContent className="rounded-none border border-line bg-paper">
+                <SelectItem value={ALL} className="rounded-none">All</SelectItem>
+                <SelectItem value="Owner" className="rounded-none">Owner</SelectItem>
+                <SelectItem value="User" className="rounded-none">User</SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        )}
+
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowFilters((s) => !s)}
+          className="ml-auto rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+          title={showFilters ? "Hide filters" : "Show filters"}
+        >
+          {showFilters ? "Hide Filters" : "Show Filters"}
+        </Button>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <Card className="rounded-none border border-line bg-paper">
@@ -426,109 +658,87 @@ export default function UsersTable({
           <CardContent className="p-0">
             <Table>
               <TableHeader>
-                <StrictRow className="border-line hover:bg-[hsl(var(--muted))]">
-                  <TableHead>
-                    <Checkbox
-                      checked={pagedRows.length > 0 && pagedRows.every((u) => selected.has(u.user_id))}
-                      onCheckedChange={toggleAllOnPage}
-                      className="rounded-none"
-                      aria-label="Select all on page"
-                    />
-                  </TableHead>
-                  <TableHead className="text-ink">User</TableHead>
-                  <TableHead className="text-ink">Email</TableHead>
-                  <TableHead className="text-ink">Group</TableHead>
-                  <TableHead className="text-ink">Role</TableHead>
-                  <TableHead className="text-ink">Edit</TableHead>
-                </StrictRow>
+                {table.getHeaderGroups().map((hg) => (
+                  <StrictRow key={hg.id} className="border-line hover:bg-[hsl(var(--muted))]">
+                    {hg.headers.map((header) => (
+                      <TableHead key={header.id} style={{ width: header.getSize() }}>
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(header.column.columnDef.header, header.getContext())}
+                      </TableHead>
+                    ))}
+                  </StrictRow>
+                ))}
               </TableHeader>
 
               <TableBody>
-                {pagedRows.map((u) => {
-                  const fn = u.attributes?.firstname || ""
-                  const ln = u.attributes?.lastname || u.attributes?.surname || ""
-                  const displayName =
-                    fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
-
+                {table.getRowModel().rows.map((row) => {
+                  const u = row.original
                   return (
                     <StrictRow
-                      key={u.user_id}
+                      key={row.id}
                       className="border-line hover:bg-[hsl(var(--muted))]"
                       draggable
                       onDragStart={(e) => onDragStart(e as any, u.user_id)}
                     >
-                      <TableCell>
-                        <Checkbox
-                          checked={selected.has(u.user_id)}
-                          onCheckedChange={() => toggle(u.user_id)}
-                          className="rounded-none"
-                          aria-label={`Select ${displayName}`}
-                        />
-                      </TableCell>
-
-                      <TableCell className="font-medium text-ink">
-                        {displayName}
-                      </TableCell>
-
-                      <TableCell className="text-[hsl(var(--muted-foreground))]">
-                        <EmailCopy email={u.identifiers.email_address} />
-                      </TableCell>
-
-                      <TableCell>
-                        <GroupIconCell row={u} />
-                      </TableCell>
-
-                      <TableCell>
-                        {u.user_type === "owner" ? (
-                          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-                            <Crown className="h-3 w-3" /> Owner
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-                            <UserIcon className="h-3 w-3" /> User
-                          </Badge>
-                        )}
-                      </TableCell>
-
-                      <TableCell>
-                        <UserEditButton
-                          userId={u.user_id}
-                          userEmail={u.identifiers.email_address}
-                          existingAttributes={u.attributes}
-                          groups={groups}
-                        />
-                      </TableCell>
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
                     </StrictRow>
                   )
                 })}
               </TableBody>
             </Table>
 
-            {pageCount > 1 && (
-              <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
-                <span>Page {page + 1} / {pageCount}</span>
-                <div className="flex items-center gap-1">
-                  <Button size="icon" variant="ghost" onClick={goFirst} disabled={page === 0}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronLeft className="h-4 w-4" />
-                    <ChevronLeft className="h-4 w-4 -ml-2" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={goPrev} disabled={page === 0}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={goNext} disabled={page === pageCount - 1}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  <Button size="icon" variant="ghost" onClick={goLast} disabled={page === pageCount - 1}
-                    className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50">
-                    <ChevronRight className="h-4 w-4" />
-                    <ChevronRight className="h-4 w-4 -ml-2" />
-                  </Button>
-                </div>
+            {/* Pagination */}
+            <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
+              <span>
+                Page {table.getState().pagination.pageIndex + 1} /{" "}
+                {table.getPageCount() || 1}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => table.setPageIndex(0)}
+                  disabled={!table.getCanPreviousPage()}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronLeft className="h-4 w-4 -ml-2" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => table.previousPage()}
+                  disabled={!table.getCanPreviousPage()}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => table.nextPage()}
+                  disabled={!table.getCanNextPage()}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+                  disabled={!table.getCanNextPage()}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))] disabled:opacity-50"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4 -ml-2" />
+                </Button>
               </div>
-            )}
+            </div>
           </CardContent>
         </Card>
 

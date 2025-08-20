@@ -3,7 +3,10 @@
 
 import { useEffect, useMemo, useState } from "react"
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -17,6 +20,14 @@ import {
   type NewsletterSlug,
 } from "@/lib/newsletters"
 import { updateUserAttributesAction } from "@/lib/user-actions"
+
+/**
+ * ✨ Goals
+ * - Reduce multi-line wrapping + weird row heights
+ * - Make hit targets consistent (44px) on mobile
+ * - Keep an efficient dense layout on desktop
+ * - Preserve existing behavior & types
+ */
 
 type Props = {
   isOpen: boolean
@@ -57,16 +68,16 @@ export default function NewsletterManagerModal({
   const groupsToRender = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return ALL_NEWSLETTER_GROUPS
-    return ALL_NEWSLETTER_GROUPS.map(g => ({
+    return ALL_NEWSLETTER_GROUPS.map((g) => ({
       name: g.name,
       slugs: g.slugs.filter(
         (slug) => slug.includes(q) || slug.replace(/-/g, " ").includes(q)
       ),
-    })).filter(g => g.slugs.length > 0)
+    })).filter((g) => g.slugs.length > 0)
   }, [query])
 
   const visibleSlugs = useMemo<NewsletterSlug[]>(
-    () => groupsToRender.flatMap(g => g.slugs) as NewsletterSlug[],
+    () => groupsToRender.flatMap((g) => g.slugs) as NewsletterSlug[],
     [groupsToRender]
   )
 
@@ -86,7 +97,9 @@ export default function NewsletterManagerModal({
   }
 
   const handleSave = async () => {
-    setSaving(true); setError(null); setSuccess(null)
+    setSaving(true)
+    setError(null)
+    setSuccess(null)
     try {
       // Only send changed keys
       const outgoing: Record<string, boolean> = {}
@@ -117,13 +130,14 @@ export default function NewsletterManagerModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-none border border-line bg-paper text-ink">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-none border border-line bg-paper text-ink">
         <DialogHeader>
           <DialogTitle className="font-serif text-lg">
             Manage Newsletters for {userEmail}
           </DialogTitle>
         </DialogHeader>
 
+        {/* status banners */}
         {error && (
           <Alert variant="destructive" className="rounded-none">
             <AlertDescription>{error}</AlertDescription>
@@ -140,36 +154,39 @@ export default function NewsletterManagerModal({
             <CardTitle className="font-serif text-base">Subscriptions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-2">
+            {/* Toolbar: sticky so the filter stays visible while scrolling */}
+            <div className="sticky top-0 z-10 -mx-4 -mt-2 mb-2 flex flex-wrap items-center gap-2 border-b border-line bg-paper/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-paper/80">
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter newsletters…"
-                className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
+                className="h-9 w-full min-w-0 flex-1 rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))] md:w-auto"
               />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setAllVisible(true)}
-                className="rounded-none"
-                disabled={noMatches}
-                title="Select all visible"
-              >
-                Select All
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setAllVisible(false)}
-                className="rounded-none"
-                disabled={noMatches}
-                title="Clear all visible"
-              >
-                Clear
-              </Button>
-              <span className="ml-auto text-xs text-[hsl(var(--muted-foreground))]">
-                {selectedCount} selected
-              </span>
+              <div className="ms-auto flex w-full items-center gap-2 md:w-auto">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAllVisible(true)}
+                  className="rounded-none"
+                  disabled={noMatches}
+                  title="Select all visible"
+                >
+                  Select All
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAllVisible(false)}
+                  className="rounded-none"
+                  disabled={noMatches}
+                  title="Clear all visible"
+                >
+                  Clear
+                </Button>
+                <span className="ms-auto text-xs text-[hsl(var(--muted-foreground))]">
+                  {selectedCount} selected
+                </span>
+              </div>
             </div>
 
             {noMatches ? (
@@ -181,24 +198,43 @@ export default function NewsletterManagerModal({
                 {groupsToRender.map((group) => (
                   <div key={group.name}>
                     <div className="mb-2 font-semibold text-ink">{group.name}</div>
-                    <div className="grid gap-3 rounded-none border border-line bg-paper p-4 sm:grid-cols-2 md:grid-cols-3">
-                      {group.slugs.map((slug) => (
-                        <label
-                          key={slug}
-                          className="flex cursor-pointer select-none items-center gap-2"
-                        >
-                          <Checkbox
-                            className="rounded-none"
-                            checked={!!checked[slug as NewsletterSlug]}
-                            onCheckedChange={(v) =>
-                              toggle(slug as NewsletterSlug, v === true)
-                            }
-                          />
-                          <span className="capitalize text-[hsl(var(--muted-foreground))]">
-                            {slug.replace(/-/g, " ")}
-                          </span>
-                        </label>
-                      ))}
+
+                    {/* Responsive, even columns with a sensible min width to reduce wrap */}
+                    <div
+                      className="grid gap-2 rounded-none border border-line bg-paper p-3
+                                 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]"
+                    >
+                      {group.slugs.map((slug) => {
+                        const isChecked = !!checked[slug as NewsletterSlug]
+                        const label = slug.replace(/-/g, " ")
+                        return (
+                          <label
+                            key={slug}
+                            className="group relative flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded border border-line/60 px-3 py-2
+                                       hover:bg-[hsl(var(--muted))]/30 focus-within:ring-1 focus-within:ring-[hsl(var(--ring))]"
+                            title={label}
+                          >
+                            <Checkbox
+                              className="rounded-none mt-0.5"
+                              checked={isChecked}
+                              onCheckedChange={(v) => toggle(slug as NewsletterSlug, v === true)}
+                              aria-label={label}
+                            />
+                            <span
+                              className="min-w-0 truncate capitalize text-sm leading-tight text-[hsl(var(--muted-foreground))]"
+                            >
+                              {label}
+                            </span>
+                            {/* subtle background when selected */}
+                            <span
+                              aria-hidden
+                              className="pointer-events-none absolute inset-0 rounded ring-0
+                                         data-[on=true]:bg-[hsl(var(--secondary))]/20"
+                              data-on={isChecked}
+                            />
+                          </label>
+                        )
+                      })}
                     </div>
                   </div>
                 ))}
@@ -207,6 +243,7 @@ export default function NewsletterManagerModal({
           </CardContent>
         </Card>
 
+        {/* actions */}
         <div className="mt-4 flex justify-end gap-2">
           <Button
             variant="outline"
@@ -219,6 +256,7 @@ export default function NewsletterManagerModal({
             onClick={handleSave}
             disabled={saving}
             className="rounded-none bg-ink text-paper hover:bg-ink/90 disabled:opacity-70"
+            aria-busy={saving}
           >
             {saving ? (
               <>

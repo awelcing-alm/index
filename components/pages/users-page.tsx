@@ -10,9 +10,9 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 
-/* ---------- client table (refactored) ---------- */
-import { UsersTable } from "./users-table/index"
-import type { UiUser, GroupWithCount } from "./users-table/types"
+/* ---------- client table (default export from users-table/index.tsx) ---------- */
+import UsersTable from "./users-table"
+import type { UiUser, GroupWithCount } from "./users-table"
 
 async function UsersPage() {
   const session = await getCurrentUser()
@@ -40,8 +40,13 @@ async function UsersPage() {
 
   const users: UiUser[] =
     usersRes.status === "fulfilled" ? (usersRes.value as UiUser[]) : []
+
+  // `UsersTable` accepts GroupWithCount (has optional user_count),
+  // so this cast is fine even if your server returns plain Group.
   const groups: GroupWithCount[] =
-    groupsRes.status === "fulfilled" ? (groupsRes.value as GroupWithCount[]) : []
+    groupsRes.status === "fulfilled"
+      ? (groupsRes.value as GroupWithCount[])
+      : []
 
   const loadError =
     usersRes.status === "rejected"
@@ -61,7 +66,9 @@ async function UsersPage() {
         {loadError ? (
           <Alert variant="destructive" className="rounded-none">
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription>Failed to load users: {loadError}</AlertDescription>
+            <AlertDescription>
+              Failed to load users: {loadError}
+            </AlertDescription>
           </Alert>
         ) : (
           <Suspense
@@ -71,7 +78,7 @@ async function UsersPage() {
               </p>
             }
           >
-            {/* Pass users + groups (with user_count) to the client table */}
+            {/* Pass users + groups (with user_count if present) to the client table */}
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}

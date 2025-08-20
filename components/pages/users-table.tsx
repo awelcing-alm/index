@@ -2,7 +2,13 @@
 "use client"
 
 import React, {
-  useState, useEffect, useMemo, useCallback, useTransition, type DragEvent,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useTransition,
+  useRef,
+  type DragEvent,
 } from "react"
 
 import {
@@ -15,12 +21,19 @@ import {
   createColumnHelper,
   type ColumnDef,
   type FilterFn,
+  type ColumnFiltersState,
+  type SortingState,
+  type PaginationState,
+  type RowSelectionState,
 } from "@tanstack/react-table"
 
-import type { RowSelectionState } from "@tanstack/react-table"
-
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
@@ -28,25 +41,33 @@ import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import {
-  Select, SelectTrigger, SelectValue, SelectItem, SelectContent,
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectItem,
+  SelectContent,
 } from "@/components/ui/select"
-import {
-  Card, CardContent, CardHeader, CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 import {
-  Crown, User as UserIcon, Users as UsersIcon,
-  Folder, Loader2, ChevronLeft, ChevronRight, Filter as FilterIcon, X,
+  Crown,
+  User as UserIcon,
+  Users as UsersIcon,
+  Folder,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Filter as FilterIcon,
+  X,
 } from "lucide-react"
 
-import { getActiveAccountId } from "@/lib/account-store"
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
 
-type GroupWithCount = Group & { user_count?: number }
-type UiUser = {
+export type GroupWithCount = Group & { user_count?: number }
+export type UiUser = {
   user_id: string
   identifiers: { email_address: string }
   attributes: Record<string, any>
@@ -57,9 +78,20 @@ type UiUser = {
 }
 
 const GROUP_ICON_EMOJI: Record<string, string> = {
-  scale: "⚖️", bank: "🏛️", clipboard: "📋", shield: "🛡️", user: "👤", users: "👥",
-  briefcase: "💼", file: "📄", chart: "📈", pie: "📊", gavel: "🔨", building: "🏢",
-  folder: "🗂️", book: "📘",
+  scale: "⚖️",
+  bank: "🏛️",
+  clipboard: "📋",
+  shield: "🛡️",
+  user: "👤",
+  users: "👥",
+  briefcase: "💼",
+  file: "📄",
+  chart: "📈",
+  pie: "📊",
+  gavel: "🔨",
+  building: "🏢",
+  folder: "🗂️",
+  book: "📘",
 }
 
 /** Ensure <tr> has only element children (prevents whitespace hydration errors). */
@@ -81,43 +113,85 @@ const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const slugify = (s: string) =>
-  s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || ""
+  s?.toLowerCase?.().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") ||
+  ""
 
 function getRawGroupValue(u: UiUser): string | null {
   const a = u?.attributes ?? {}
   const candidates: unknown[] = [
-    a.group, a.Group, a["group-name"], a["group_name"],
-    a["group-id"], a["group_id"], a["group-slug"], a["group_slug"],
+    a.group,
+    a.Group,
+    a["group-name"],
+    a["group_name"],
+    a["group-id"],
+    a["group_id"],
+    a["group-slug"],
+    a["group_slug"],
   ]
   for (const c of candidates) {
     if (!c) continue
     if (typeof c === "string") return c.trim()
-    if (typeof c === "object" && c && "value" in (c as any) && typeof (c as any).value === "string") {
+    if (
+      typeof c === "object" &&
+      c &&
+      "value" in (c as any) &&
+      typeof (c as any).value === "string"
+    ) {
       return (c as any).value.trim()
     }
   }
   return null
 }
 
-/* ---------------- component ---------------- */
-export default function UsersTable({ users, groups }: { users: UiUser[]; groups: GroupWithCount[] }) {
-  const accountId = getActiveAccountId()
+async function fetchJson(url: string, init?: RequestInit) {
+  const res = await fetch(url, {
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { Accept: "application/json", ...(init?.headers || {}) },
+    ...init,
+  })
+  // Read as text first; sometimes error pages or empty bodies occur
+  const raw = await res.text().catch(() => "")
+  let data: any = null
+  try { data = raw ? JSON.parse(raw) : null } catch { /* non-JSON */ }
+  return { res, data, raw }
+}
 
+/* ---------------- component ---------------- */
+export default function UsersTable({
+  users,
+  groups,
+}: {
+  users: UiUser[]
+  groups: GroupWithCount[]
+}) {
   /* ---------------- data source ---------------- */
   const [rows, setRows] = useState(users)
   useEffect(() => setRows(users), [users])
 
+  /* ---------------- selection / UI state ---------------- */
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showFilters, setShowFilters] = useState(true)
+  const [, startTransition] = useTransition()
 
   /* ---------------- groups lookup maps ---------------- */
-  const groupById = useMemo(() => Object.fromEntries(groups.map((g) => [g.id, g])), [groups])
-  const groupByNameLower = useMemo(
-    () => Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g])),
-    [groups]
+  const groupById = useMemo(
+    () => Object.fromEntries(groups.map((g) => [g.id, g] as const)),
+    [groups],
   )
-  const groupBySlug = useMemo(() => Object.fromEntries(groups.map((g) => [g.slug, g])), [groups])
+  const groupByNameLower = useMemo(
+    () => Object.fromEntries(groups.map((g) => [g.name.toLowerCase(), g] as const)),
+    [groups],
+  )
+  const groupBySlug = useMemo(
+    () => Object.fromEntries(groups.map((g) => [g.slug, g] as const)),
+    [groups],
+  )
   const groupBySlugifiedName = useMemo(
-    () => Object.fromEntries(groups.map((g) => [slugify(g.name), g])), [groups]
+    () => Object.fromEntries(groups.map((g) => [slugify(g.name), g] as const)),
+    [groups],
   )
 
   const resolveGroupForRow = useCallback(
@@ -136,43 +210,49 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
       if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
       return null
     },
-    [groupById, groupByNameLower, groupBySlug, groupBySlugifiedName]
+    [groupById, groupByNameLower, groupBySlug, groupBySlugifiedName],
   )
 
   /* ---------------- persistent counts (seeded from DB) ---------------- */
   const [counts, setCounts] = useState<Record<string, number>>(
-    () => Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0]))
+    () => Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0] as const)),
   )
   useEffect(() => {
-    setCounts(Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0])))
+    setCounts(Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0] as const)))
   }, [groups])
-
-  /* ---------------- selection / UI state ---------------- */
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [, startTransition] = useTransition()
 
   /* ---------------- memberships hydration ---------------- */
   const refreshMemberships = useCallback(async (userIds: string[]) => {
     if (!userIds.length) return
     try {
       const qs = encodeURIComponent(userIds.join(","))
-      const res = await fetch(`/api/groups/membership?user_ids=${qs}`, { cache: "no-store" })
+      const res = await fetch(`/api/groups/membership?user_ids=${qs}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" }, // be explicit
+      })
       if (!res.ok) return
-      const payload = await res.json() as {
-        ok: boolean,
-        memberships: Record<string, { group_id: string, name: string | null, icon: string | null }>
+      const payload = (await res.json()) as {
+        ok: boolean
+        memberships: Record<
+          string,
+          { group_id: string; name: string | null; icon: string | null }
+        >
       }
       if (!payload?.ok) return
       const byUser = payload.memberships || {}
       startTransition(() => {
-        setRows(prev =>
-          prev.map(u => {
+        setRows((prev) =>
+          prev.map((u) => {
             const m = byUser[u.user_id]
             return m
-              ? { ...u, group_id: m.group_id, group_icon: m.icon, group_name: m.name ?? undefined }
+              ? {
+                ...u,
+                group_id: m.group_id,
+                group_icon: m.icon,
+                group_name: m.name ?? undefined,
+              }
               : u
-          })
+          }),
         )
       })
     } catch (e) {
@@ -180,8 +260,15 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
     }
   }, [])
 
-  /* ---------------- TanStack Table setup ---------------- */
+  /* ---------------- TanStack Table setup (controlled) ---------------- */
   const PER_PAGE = 25
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: PER_PAGE,
+  })
+  const [globalFilter, setGlobalFilter] = useState<string>("")
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
+  const [sorting, setSorting] = useState<SortingState>([])
 
   // Global filter on (name OR email)
   const globalFilterFn: FilterFn<UiUser> = (row, _columnId, filterValue) => {
@@ -189,9 +276,25 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
     if (!q) return true
     const email = (row.original.identifiers?.email_address || "").toLowerCase()
     const fn = String(row.original.attributes?.firstname || "").toLowerCase()
-    const ln = String(row.original.attributes?.lastname || row.original.attributes?.surname || "").toLowerCase()
+    const ln = String(
+      row.original.attributes?.lastname || row.original.attributes?.surname || "",
+    ).toLowerCase()
     const name = `${fn} ${ln}`.trim()
     return email.includes(q) || name.includes(q)
+  }
+
+  // Page-select helper that targets only the visible (paginated) rows
+  const setAllOnPage = (checked: boolean, tbl: any) => {
+    setRowSelection((prev) => {
+      if (!checked) {
+        const next = { ...prev } as Record<string, boolean>
+        for (const r of tbl.getRowModel().rows) delete next[r.id]
+        return next
+      }
+      const next = { ...prev } as Record<string, boolean>
+      for (const r of tbl.getRowModel().rows) next[r.id] = true
+      return next
+    })
   }
 
   const col = createColumnHelper<UiUser>()
@@ -202,12 +305,14 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
       header: ({ table }) => (
         <Checkbox
           className="rounded-none"
-          checked={table.getIsAllPageRowsSelected()}
-          onCheckedChange={(v) => setAllOnPage(v === true)}   // CHANGED
+          checked={
+            (table as any).getIsAllPageRowsSelected?.() ??
+            table.getRowModel().rows.every((r) => r.getIsSelected())
+          }
+          onCheckedChange={(v) => setAllOnPage(v === true, table)}
           aria-label="Select all on page"
         />
       ),
-
       cell: ({ row }) => (
         <Checkbox
           className="rounded-none"
@@ -229,7 +334,8 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
         const u = row.original
         const fn = u.attributes?.firstname || ""
         const ln = u.attributes?.lastname || u.attributes?.surname || ""
-        const displayName = fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
+        const displayName =
+          fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
         return <span className="font-medium text-ink">{displayName}</span>
       },
       sortingFn: (a, b) => {
@@ -251,7 +357,9 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
         return (
           <button
             onClick={async () => {
-              try { await navigator.clipboard.writeText(email) } catch { }
+              try {
+                await navigator.clipboard.writeText(email)
+              } catch { }
             }}
             className="underline decoration-dotted text-[hsl(var(--muted-foreground))] hover:opacity-80"
             title="Click to copy"
@@ -281,18 +389,16 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
           </span>
         )
       },
-      // Use resolved group id as filter value
       enableColumnFilter: true,
       filterFn: (row, _id, value: string) => {
         if (!value) return true
-        const u = row.original
-        const g = resolveGroupForRow(u)
+        const g = resolveGroupForRow(row.original)
         return (g?.id ?? "") === value
       },
     }),
 
     // Role
-    col.accessor((u) => u.user_type === "owner" ? "Owner" : "User", {
+    col.accessor((u) => (u.user_type === "owner" ? "Owner" : "User"), {
       id: "role",
       header: () => <span className="text-ink">Role</span>,
       cell: ({ getValue }) => {
@@ -337,46 +443,41 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
     columns,
     getRowId: (row) => row.user_id,
     enableRowSelection: true,
-    state: {
-      rowSelection,
-      pagination: { pageIndex: 0, pageSize: PER_PAGE },
-    },
+
+    // CONTROLLED STATE
+    state: { rowSelection, pagination, globalFilter, columnFilters, sorting },
     onRowSelectionChange: setRowSelection,
+    onPaginationChange: setPagination,
+    onGlobalFilterChange: setGlobalFilter,
+    onColumnFiltersChange: setColumnFilters,
+    onSortingChange: setSorting,
+
+    // prevent implicit reset to page 0 on data change
+    autoResetPageIndex: false,
+
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+
     globalFilterFn,
   })
 
-  // Select / clear all rows on the current page in a single state update
-  const setAllOnPage = (checked: boolean) => {
-    setRowSelection((prev) => {
-      if (!checked) {
-        // Clear: remove only the current page row ids
-        const next = { ...prev }
-        for (const r of table.getRowModel().rows) delete next[r.id]
-        return next
-      }
-      // Select: add only the current page row ids
-      const next = { ...prev }
-      for (const r of table.getRowModel().rows) next[r.id] = true
-      return next
-    })
-  }
+  // Reset to page 1 when filters/sort/global search change (explicit UX)
+  useEffect(() => {
+    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }))
+  }, [sorting, columnFilters, globalFilter])
 
-
-  // hydrate memberships for the current page
-  const { pageIndex, pageSize } = table.getState().pagination
-  const sorting = table.getState().sorting
-  const columnFilters = table.getState().columnFilters
-  const globalFilter = table.getState().globalFilter
-
+  // hydrate memberships for the current (filtered + sorted + paginated) page
+  const lastMembershipKey = useRef<string>("")
   useEffect(() => {
     const ids = table.getRowModel().rows.map((r) => r.original.user_id)
+    const key = ids.join(",")
+    if (key === lastMembershipKey.current) return
+    lastMembershipKey.current = key
     refreshMemberships(ids)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageIndex, pageSize, sorting, columnFilters, globalFilter, rows])
+  }, [rows, pagination.pageIndex, pagination.pageSize, sorting, columnFilters, globalFilter])
 
   /* ---------------- actions (assign/template) ---------------- */
   const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.user_id)
@@ -384,9 +485,21 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
   const extractDemographicAttrs = (g: GroupWithCount) => {
     const d = (g?.demographics || {}) as any
     return {
-      ...(d["country"] ? { "country": d["country"] } : d["region"] ? { "country": d["region"] } : {}),
-      ...(d["job-function"] ? { "job-function": d["job-function"] } : d["job_function"] ? { "job-function": d["job_function"] } : {}),
-      ...(d["job-area"] ? { "job-area": d["job-area"] } : d["job_area"] ? { "job-area": d["job_area"] } : {}),
+      ...(d["country"]
+        ? { country: d["country"] }
+        : d["region"]
+          ? { country: d["region"] }
+          : {}),
+      ...(d["job-function"]
+        ? { "job-function": d["job-function"] }
+        : d["job_function"]
+          ? { "job-function": d["job_function"] }
+          : {}),
+      ...(d["job-area"]
+        ? { "job-area": d["job-area"] }
+        : d["job_area"]
+          ? { "job-area": d["job_area"] }
+          : {}),
     }
   }
 
@@ -403,7 +516,8 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
 
   async function assignToGroup(targetGroupId: string, userIds: string[]) {
     if (!userIds.length) return
-    const g = groupById[targetGroupId]; if (!g) return
+    const g = groupById[targetGroupId]
+    if (!g) return
 
     // Build deltas: +N to target, -1 for each old group (when different)
     const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
@@ -417,7 +531,8 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
 
     const demo = extractDemographicAttrs(g)
 
-    setLoading(true); setError(null)
+    setLoading(true)
+    setError(null)
     try {
       // 1) Patch Zephr attributes
       await Promise.all(
@@ -426,20 +541,24 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
         ),
       )
 
-      // 2) Persist membership + counts
-      const payload = {
-        assignments: userIds.map((uid) => ({ user_id: uid, group_id: targetGroupId })),
-        changes: Object.entries(deltas).map(([id, delta]) => ({ id, delta })),
+      // 2) Persist membership (use the dedicated write route)
+      const writePayload = {
+        // server will read active account from session; you can pass accountId if you want:
+        // accountId,
+        userIds,
+        groupId: targetGroupId,
       }
-      const res = await fetch("/api/groups/membership", {
+      const { res, data, raw } = await fetchJson("/api/membership/set", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(writePayload),
       })
-      const data = await res.json()
+
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Failed to persist membership")
+        const msg = data?.error || raw || `Request failed (${res.status})`
+        throw new Error(msg)
       }
+
 
       // 3) Optimistic UI update
       setRows((prev) =>
@@ -452,16 +571,19 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
               group_name: g.name,
               attributes: { ...u.attributes, group: g.name, ...demo },
             }
-            : u
+            : u,
         ),
       )
 
       // 4) Counts
       const serverDeltas: Record<string, number> | undefined = data?.deltas
-      applyCountDeltasLocal(serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas)
+      applyCountDeltasLocal(
+        serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas,
+      )
 
       // 5) Re-hydrate for current page
       const ids = table.getRowModel().rows.map((r) => r.original.user_id)
+      lastMembershipKey.current = "" // force run
       await refreshMemberships(ids)
 
       table.resetRowSelection()
@@ -477,9 +599,6 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
     await assignToGroup(targetGroupId, selectedIds)
   }
 
-  const fetchTemplateNames = async () =>
-    (await fetch("/api/templates")).json() as Promise<string[]>
-
   const fetchTemplate = async (name: string) => {
     const hit = DEFAULT_TEMPLATES.find((t) => t.name === name)
     if (hit) return hit
@@ -489,14 +608,13 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
 
   async function applyTemplate(templateName: string) {
     if (!selectedIds.length) return
-    setLoading(true); setError(null)
+    setLoading(true)
+    setError(null)
     try {
       const tpl = await fetchTemplate(templateName)
       if (!tpl) throw new Error("Template not found")
       await Promise.all(
-        selectedIds.map((uid) =>
-          updateUserAttributesAction(uid, tpl.attributes),
-        ),
+        selectedIds.map((uid) => updateUserAttributesAction(uid, tpl.attributes)),
       )
       table.resetRowSelection()
     } catch (e: any) {
@@ -512,7 +630,8 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
     e.dataTransfer.effectAllowed = "move"
   }, [])
   const onDragOver = useCallback((e: DragEvent) => {
-    e.preventDefault(); e.dataTransfer.dropEffect = "move"
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "move"
   }, [])
   const onDrop = useCallback(
     async (e: DragEvent, targetGroupId: string) => {
@@ -521,12 +640,10 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
       const ids = selectedIds.includes(draggedId) ? selectedIds : [draggedId]
       await assignToGroup(targetGroupId, ids)
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedIds]
+    [selectedIds], // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   /* ---------------- toolbar (filters) ---------------- */
-  const [showFilters, setShowFilters] = useState(true)
   const ALL = "__ALL__"
 
   /* ---------------- UI ---------------- */
@@ -540,7 +657,9 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
 
       {table.getSelectedRowModel().rows.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted))] p-3">
-          <p className="text-sm text-ink">{table.getSelectedRowModel().rows.length} selected</p>
+          <p className="text-sm text-ink">
+            {table.getSelectedRowModel().rows.length} selected
+          </p>
 
           <Select onValueChange={applyGroup} disabled={loading}>
             <SelectTrigger className="h-8 w-48 rounded-none border border-line bg-paper text-ink">
@@ -548,7 +667,11 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
             </SelectTrigger>
             <SelectContent className="max-h-60 overflow-y-auto rounded-none border border-line bg-paper">
               {groups.map((g) => (
-                <SelectItem key={g.id} value={g.id} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">
+                <SelectItem
+                  key={g.id}
+                  value={g.id}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                >
                   {g.name}
                 </SelectItem>
               ))}
@@ -561,14 +684,20 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
             </SelectTrigger>
             <SelectContent className="max-h-60 overflow-y-auto rounded-none border border-line bg-paper">
               {DEFAULT_TEMPLATES.map((t) => (
-                <SelectItem key={t.name} value={t.name} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">
+                <SelectItem
+                  key={t.name}
+                  value={t.name}
+                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                >
                   {t.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          {loading && <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />}
+          {loading && (
+            <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />
+          )}
         </div>
       )}
 
@@ -578,15 +707,15 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
           <FilterIcon className="h-4 w-4 text-[hsl(var(--muted-foreground))]" />
           <Input
             placeholder="Search name or email…"
-            value={(table.getState().globalFilter as string) ?? ""}
-            onChange={(e) => table.setGlobalFilter(e.target.value)}
+            value={globalFilter}
+            onChange={(e) => setGlobalFilter(e.target.value)}
             className="h-8 w-72 rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
           />
-          {table.getState().globalFilter ? (
+          {globalFilter ? (
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => table.setGlobalFilter("")}
+              onClick={() => setGlobalFilter("")}
               className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
             >
               <X className="h-4 w-4" />
@@ -608,7 +737,9 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
                 <SelectValue placeholder="Filter by group" />
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto rounded-none border border-line bg-paper">
-                <SelectItem value={ALL} className="rounded-none">All groups</SelectItem>
+                <SelectItem value={ALL} className="rounded-none">
+                  All groups
+                </SelectItem>
                 {groups.map((g) => (
                   <SelectItem key={g.id} value={g.id} className="rounded-none">
                     {g.name}
@@ -628,9 +759,15 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
                 <SelectValue placeholder="Filter by role" />
               </SelectTrigger>
               <SelectContent className="rounded-none border border-line bg-paper">
-                <SelectItem value={ALL} className="rounded-none">All</SelectItem>
-                <SelectItem value="Owner" className="rounded-none">Owner</SelectItem>
-                <SelectItem value="User" className="rounded-none">User</SelectItem>
+                <SelectItem value={ALL} className="rounded-none">
+                  All
+                </SelectItem>
+                <SelectItem value="Owner" className="rounded-none">
+                  Owner
+                </SelectItem>
+                <SelectItem value="User" className="rounded-none">
+                  User
+                </SelectItem>
               </SelectContent>
             </Select>
           </>
@@ -659,7 +796,10 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
             <Table>
               <TableHeader>
                 {table.getHeaderGroups().map((hg) => (
-                  <StrictRow key={hg.id} className="border-line hover:bg-[hsl(var(--muted))]">
+                  <StrictRow
+                    key={hg.id}
+                    className="border-line hover:bg-[hsl(var(--muted))]"
+                  >
                     {hg.headers.map((header) => (
                       <TableHead key={header.id} style={{ width: header.getSize() }}>
                         {header.isPlaceholder
@@ -695,8 +835,7 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
             {/* Pagination */}
             <div className="flex items-center justify-between border-t border-line p-3 text-sm text-ink">
               <span>
-                Page {table.getState().pagination.pageIndex + 1} /{" "}
-                {table.getPageCount() || 1}
+                Page {pagination.pageIndex + 1} / {table.getPageCount() || 1}
               </span>
               <div className="flex items-center gap-1">
                 <Button
@@ -765,7 +904,10 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
                   <span className="text-lg" aria-hidden="true">
                     {GROUP_ICON_EMOJI[g.icon || ""] ?? "📁"}
                   </span>
-                  <span className="capitalize text-ink" style={{ color: g.color ?? undefined }}>
+                  <span
+                    className="capitalize text-ink"
+                    style={{ color: g.color ?? undefined }}
+                  >
                     {g.name}
                   </span>
                 </div>
@@ -780,3 +922,5 @@ export default function UsersTable({ users, groups }: { users: UiUser[]; groups:
     </>
   )
 }
+
+export { UsersTable }

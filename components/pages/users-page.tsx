@@ -3,15 +3,16 @@ import { Suspense } from "react"
 
 /* ---------- server helpers ---------- */
 import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
-import { listGroups, type Group } from "@/lib/groups"
+import { listGroups } from "@/lib/groups"
 
 /* ---------- ui ---------- */
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 
-/* ---------- client component ---------- */
+/* ---------- client table (default export from users-table/index.tsx) ---------- */
 import UsersTable from "./users-table"
+import type { UiUser, GroupWithCount } from "./users-table"
 
 async function UsersPage() {
   const session = await getCurrentUser()
@@ -34,11 +35,19 @@ async function UsersPage() {
 
   const [usersRes, groupsRes] = await Promise.allSettled([
     getUsersForCurrentAccount(),
-    listGroups(accountId as string),
+    listGroups(accountId),
   ])
 
-  const users = usersRes.status === "fulfilled" ? usersRes.value : ([] as any[])
-  const groups = (groupsRes.status === "fulfilled" ? groupsRes.value : []) as Group[]
+  const users: UiUser[] =
+    usersRes.status === "fulfilled" ? (usersRes.value as UiUser[]) : []
+
+  // `UsersTable` accepts GroupWithCount (has optional user_count),
+  // so this cast is fine even if your server returns plain Group.
+  const groups: GroupWithCount[] =
+    groupsRes.status === "fulfilled"
+      ? (groupsRes.value as GroupWithCount[])
+      : []
+
   const loadError =
     usersRes.status === "rejected"
       ? usersRes.reason?.message ?? "Unknown error"
@@ -69,7 +78,7 @@ async function UsersPage() {
               </p>
             }
           >
-            {/* Pass users + groups (with user_count) to the client table */}
+            {/* Pass users + groups (with user_count if present) to the client table */}
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}

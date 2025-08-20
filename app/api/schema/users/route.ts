@@ -1,16 +1,16 @@
-// app/api/schema/users/route.ts
+// app/api/zephr/schema/users/route.ts
 import { NextResponse } from "next/server"
-import { adminApiCall } from "@/lib/api-client"
-
-export const dynamic = "force-dynamic"
+import { adminApiCall } from "@/lib/api-client" // your existing Zephr server helper
 
 export async function GET() {
   try {
-    // Pass-through to Zephr v3 schema
-    const data = await adminApiCall("/v3/schema/users", { method: "GET" })
-    return NextResponse.json(data)
+    const json = await adminApiCall("/v3/schema/users", { method: "GET" })
+    // pass-through so the client can choose how to filter
+    return NextResponse.json({ ok: true, data: json?.data ?? [], raw: json })
   } catch (err: any) {
-    console.error("[/api/schema/users] error", err)
-    return new NextResponse("Failed to load user schema", { status: 500 })
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? "Failed to fetch Zephr user schema" },
+      { status: 500 }
+    )
   }
 }

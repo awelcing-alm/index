@@ -1,0 +1,5 @@
+{
+  "name": "index",
+  "build": { "dockerfile": "Dockerfile" },
+  "postCreateCommand": "psql --version && pg_dump --version"
+}

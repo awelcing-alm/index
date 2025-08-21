@@ -1,16 +1,19 @@
 // components/pages/users-page.tsx
 import { Suspense } from "react"
 
-/* ---------- server helpers ---------- */
+/* actions */
 import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
 import { listGroups } from "@/lib/groups"
 
-/* ---------- ui ---------- */
+/* ui */
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertTriangle, Users as UsersIcon } from "lucide-react"
 
-/* ---------- client table (default export from users-table/index.tsx) ---------- */
+/* client controls (button + modal wrapper) */
+import UsersExportControls from "@/components/users-export-controls"
+
+/* client table */
 import UsersTable from "./users-table"
 import type { UiUser, GroupWithCount } from "./users-table"
 
@@ -31,7 +34,16 @@ async function UsersPage() {
     )
   }
 
-  const accountId = (acct as any).account_id ?? (acct as any).id ?? ""
+  // Normalize account id from either source (Zephr vs DB)
+  const accountId: string =
+    (acct as any).account_id ??
+    (typeof (acct as any).id !== "undefined" ? String((acct as any).id) : "")
+
+  // Only include fields expected by the export controls (prevents excess-prop TS errors)
+  const activeAccountRef = {
+    account_id: accountId,
+    name: (acct as any).name ?? "Account",
+  } as const
 
   const [usersRes, groupsRes] = await Promise.allSettled([
     getUsersForCurrentAccount(),
@@ -41,12 +53,8 @@ async function UsersPage() {
   const users: UiUser[] =
     usersRes.status === "fulfilled" ? (usersRes.value as UiUser[]) : []
 
-  // `UsersTable` accepts GroupWithCount (has optional user_count),
-  // so this cast is fine even if your server returns plain Group.
   const groups: GroupWithCount[] =
-    groupsRes.status === "fulfilled"
-      ? (groupsRes.value as GroupWithCount[])
-      : []
+    groupsRes.status === "fulfilled" ? (groupsRes.value as GroupWithCount[]) : []
 
   const loadError =
     usersRes.status === "rejected"
@@ -55,11 +63,16 @@ async function UsersPage() {
 
   return (
     <Card className="rounded-none border border-line bg-paper">
-      <CardHeader>
+      <CardHeader className="flex items-center justify-between gap-4 sm:flex-row">
         <CardTitle className="flex items-center gap-2 font-serif text-2xl text-ink">
           <UsersIcon className="h-6 w-6" aria-hidden="true" />
-          Account Users — {(acct as any)?.name ?? "Account"}
+          <span>Account Users — {activeAccountRef.name}</span>
         </CardTitle>
+
+        {/* right-aligned actions */}
+        <div className="flex items-center gap-2">
+          <UsersExportControls activeAccount={activeAccountRef} />
+        </div>
       </CardHeader>
 
       <CardContent>
@@ -78,7 +91,6 @@ async function UsersPage() {
               </p>
             }
           >
-            {/* Pass users + groups (with user_count if present) to the client table */}
             <UsersTable users={users} groups={groups} />
           </Suspense>
         )}

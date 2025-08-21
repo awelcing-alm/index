@@ -1,3 +1,4 @@
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,226 +8,205 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model account_activity {
-  id           Int       @id @default(autoincrement())
-  account_id   Int?
-  date         DateTime  @db.Date
-  active_users Int?      @default(0)
-  pageviews    Int?      @default(0)
-  created_at   DateTime? @default(now()) @db.Timestamptz(6)
-  accounts     accounts? @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+/// ========= CORE TENANCY =========
 
-  @@unique([account_id, date])
+model Account {
+  id               String           @id @default(uuid()) @db.Uuid
+  zephr_account_id String           @unique @db.VarChar(255) // natural key from Zephr
+  name             String           @db.VarChar(255)
+  email_address    String?          @db.VarChar(255)
+  number_of_seats  Int?
+  tenant_id        String?          @db.VarChar(255)
+
+  // relations
+  users            UserAccount[]    // M2M via pivot
+  groups           Group[]
+  grants           AccountGrant[]
+
+  // timestamps
+  created_at       DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime         @default(now()) @db.Timestamptz(6)
+
+  @@index([zephr_account_id], map: "acct_by_zephr")
 }
 
-model accounts {
-  id                 Int                 @id @default(autoincrement())
-  external_id        String              @unique @db.VarChar(255)
-  name               String              @db.VarChar(255)
-  type               String?             @db.VarChar(50)
-  status             String              @db.VarChar(50)
-  industry           String?             @db.VarChar(255)
-  website            String?             @db.VarChar(255)
-  contact_name       String?             @db.VarChar(255)
-  contact_email      String?             @db.VarChar(255)
-  contact_phone      String?             @db.VarChar(50)
-  address            String?
-  total_users        Int?                @default(0)
-  active_users       Int?                @default(0)
-  mrr                Decimal?            @db.Decimal(10, 2)
-  subscription_start DateTime?           @db.Date
-  next_billing       DateTime?           @db.Date
-  health_score       Int?
-  rep_id             String?             @db.VarChar(50)
-  created_at         DateTime?           @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime?           @default(now()) @db.Timestamptz(6)
-  account_activity   account_activity[]
-  group_memberships  group_memberships[] @ignore
-  groups             groups[]
-  product_usage      product_usage[]
-  subscriptions      subscriptions[]
-  top_pages          top_pages[]
-  user_accounts      user_accounts[]
+model User {
+  id              String          @id @default(uuid()) @db.Uuid
+  zephr_user_id   String          @unique @db.VarChar(255) // natural key from Zephr
+  email           String          @db.VarChar(320)
+  // Zephr attributes (demographics etc). Export reads from here.
+  attributes      Json?           @default("{}")
+  email_verified  Boolean?        @default(false)
 
-  @@index([rep_id], map: "idx_accounts_rep_id")
+  // optional profile-ish fields (mostly for convenience in UI)
+  firstname       String?         @db.VarChar(255)
+  lastname        String?         @db.VarChar(255)
+  role            String?         @db.VarChar(50)         // "owner" | "admin" | "user"
+  status          String?         @db.VarChar(50)         // "active" | "inactive" etc
+  last_login      DateTime?       @db.Timestamptz(6)
+
+  // relations
+  accounts        UserAccount[]   // M2M via pivot
+  memberships     GroupMembership[]
+  newsletterSubs  UserNewsletter[]
+
+  created_at      DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime        @default(now()) @db.Timestamptz(6)
+
+  @@index([email], map: "user_by_email")
+  @@index([zephr_user_id], map: "user_by_zephr")
 }
 
-model attribute_definitions {
-  slug           String   @id
-  label          String?
-  input_type     String?
-  required       Boolean?
-  select_options Json?
-}
+model UserAccount {
+  // M2M (User ↔ Account), holds per-tenant role/status if you want
+  user_id    String  @db.Uuid
+  account_id String  @db.Uuid
+  role       String? @db.VarChar(50)
+  status     String? @db.VarChar(50)
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
-model group_memberships {
-  user_external_id String
-  group_id         String    @db.Uuid
-  assigned_by      String?
-  assigned_at      DateTime  @default(now()) @db.Timestamptz(6)
-  account_id       Int
-  account_id_new   String?   @db.VarChar(255)
-  accounts         accounts? @relation(fields: [account_id_new], references: [external_id], onDelete: Cascade, map: "gm_account_fk_new")
-  groups           groups    @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users            users     @relation(fields: [user_external_id], references: [external_id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@index([account_id, group_id], map: "gm_by_group")
-  @@index([account_id, user_external_id], map: "gm_by_user")
-  @@ignore
-}
-
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model groups {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug              String
-  name              String
-  color             String?             @db.VarChar(7)
-  icon              String?
-  default_template  String?
-  product_grant_ids String[]            @default([])
-  demographics      Json                @default("{}")
-  created_at        DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
-  user_count        Int                 @default(0)
-  account_id        Int
-  account_id_new    String?             @db.VarChar(255)
-  group_memberships group_memberships[] @ignore
-  accounts          accounts?           @relation(fields: [account_id_new], references: [external_id], onDelete: NoAction, map: "groups_account_fk_new")
-  users             users[]
-
-  @@unique([account_id, slug])
-  @@unique([account_id_new, slug], map: "groups_account_slug_unique")
-  @@index([account_id], map: "idx_groups_account_id")
-}
-
-model newsletters {
-  id               Int                @id @default(autoincrement())
-  name             String             @db.VarChar(255)
-  description      String?
-  created_at       DateTime?          @default(now()) @db.Timestamptz(6)
-  user_newsletters user_newsletters[]
-}
-
-model product_usage {
-  id           Int       @id @default(autoincrement())
-  account_id   Int?
-  product_id   Int?
-  date         DateTime  @db.Date
-  pageviews    Int?      @default(0)
-  active_users Int?      @default(0)
-  created_at   DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime? @default(now()) @db.Timestamptz(6)
-  accounts     accounts? @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  products     products? @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@unique([account_id, product_id, date])
-}
-
-model products {
-  id            Int             @id @default(autoincrement())
-  name          String          @unique @db.VarChar(255)
-  description   String?
-  created_at    DateTime?       @default(now()) @db.Timestamptz(6)
-  product_usage product_usage[]
-}
-
-model subscriptions {
-  id            Int       @id @default(autoincrement())
-  external_id   String    @unique @db.VarChar(255)
-  account_id    Int?
-  customer_name String    @db.VarChar(255)
-  email         String?   @db.VarChar(255)
-  plan          String    @db.VarChar(50)
-  plan_type     String    @db.VarChar(50)
-  status        String    @db.VarChar(50)
-  amount        Decimal?  @db.Decimal(10, 2)
-  billing_cycle String?   @db.VarChar(50)
-  start_date    DateTime? @db.Date
-  next_billing  DateTime? @db.Date
-  created_at    DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime? @default(now()) @db.Timestamptz(6)
-  accounts      accounts? @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model top_pages {
-  id               Int       @id @default(autoincrement())
-  account_id       Int?
-  url              String    @db.VarChar(255)
-  title            String?   @db.VarChar(255)
-  pageviews        Int?      @default(0)
-  avg_time_on_page Int?      @default(0)
-  bounce_rate      Decimal?  @default(0) @db.Decimal(5, 2)
-  created_at       DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime? @default(now()) @db.Timestamptz(6)
-  accounts         accounts? @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model user_accounts {
-  user_id    Int
-  account_id String   @db.VarChar(255)
-  accounts   accounts @relation(fields: [account_id], references: [external_id], onDelete: Cascade, map: "user_accounts_account_fk_new")
-  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user       User    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  account    Account @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([user_id, account_id])
-  @@index([account_id], map: "idx_user_accounts_account_id")
+  @@index([account_id, user_id], map: "ua_by_account_user")
 }
 
-model user_activity {
-  id         Int       @id @default(autoincrement())
-  user_id    Int?
-  date       DateTime  @db.Date
-  logins     Int?      @default(0)
-  pageviews  Int?      @default(0)
-  created_at DateTime? @default(now()) @db.Timestamptz(6)
-  users      users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+/// ========= GROUPS & MEMBERSHIPS =========
 
-  @@unique([user_id, date])
+model Group {
+  id                String             @id @default(uuid()) @db.Uuid
+  account_id        String             @db.Uuid
+  slug              String
+  name              String
+  icon              String?            @db.VarChar(32)
+  color             String?            @db.VarChar(7) // e.g. #RRGGBB
+  demographics      Json               @default("{}")
+  default_template_id String?          @db.Uuid
+
+  account           Account            @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  default_template  Template?          @relation(fields: [default_template_id], references: [id], onDelete: SetNull)
+  memberships       GroupMembership[]
+
+  created_at        DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime           @default(now()) @db.Timestamptz(6)
+
+  @@unique([account_id, slug], map: "group_slug_per_account")
+  @@index([account_id], map: "group_by_account")
 }
 
-model user_newsletters {
-  id            Int          @id @default(autoincrement())
-  user_id       Int?
-  newsletter_id Int?
-  subscribed    Boolean?     @default(true)
-  open_rate     Decimal?     @default(0) @db.Decimal(5, 2)
-  click_rate    Decimal?     @default(0) @db.Decimal(5, 2)
-  created_at    DateTime?    @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime?    @default(now()) @db.Timestamptz(6)
-  newsletters   newsletters? @relation(fields: [newsletter_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users         users?       @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+model GroupMembership {
+  group_id String @db.Uuid
+  user_id  String @db.Uuid
 
-  @@unique([user_id, newsletter_id])
+  group    Group  @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  assigned_by String?   // optionally store who assigned
+  assigned_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([group_id, user_id])
+  @@index([user_id], map: "gm_by_user")
+  @@index([group_id], map: "gm_by_group")
 }
 
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
-model users {
-  id                Int                 @id @default(autoincrement())
-  external_id       String              @unique @db.VarChar(255)
-  email             String              @db.VarChar(255)
-  role              String?             @db.VarChar(50)
-  status            String?             @db.VarChar(50)
-  department        String?             @db.VarChar(255)
-  title             String?             @db.VarChar(255)
-  phone             String?             @db.VarChar(50)
-  join_date         DateTime?           @db.Date
-  last_login        DateTime?           @db.Timestamptz(6)
-  login_count       Int?                @default(0)
-  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime?           @default(now()) @db.Timestamptz(6)
-  attributes        Json?               @default("{}")
-  firstname         String?             @db.VarChar(255)
-  lastname          String?             @db.VarChar(255)
-  group_id          String?             @db.Uuid
-  last_synced_at    DateTime?           @db.Timestamptz(6)
-  last_source       String?
-  group_memberships group_memberships[] @ignore
-  user_accounts     user_accounts[]
-  user_activity     user_activity[]
-  user_newsletters  user_newsletters[]
-  groups            groups?             @relation(fields: [group_id], references: [id], onUpdate: NoAction)
+/// ========= NEWSLETTERS =========
 
-  @@index([group_id], map: "idx_users_team_id")
+model Newsletter {
+  id          String            @id @default(uuid()) @db.Uuid
+  name        String            @unique @db.VarChar(255)
+  description String?
+  created_at  DateTime?         @default(now()) @db.Timestamptz(6)
+
+  subscribers UserNewsletter[]
+}
+
+model UserNewsletter {
+  user_id       String      @db.Uuid
+  newsletter_id String      @db.Uuid
+  subscribed    Boolean     @default(true)
+  open_rate     Decimal?    @default(0) @db.Decimal(5, 2)
+  click_rate    Decimal?    @default(0) @db.Decimal(5, 2)
+  created_at    DateTime?   @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime?   @default(now()) @db.Timestamptz(6)
+
+  user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  newsletter   Newsletter   @relation(fields: [newsletter_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, newsletter_id])
+  @@index([newsletter_id], map: "un_by_newsletter")
+}
+
+/// ========= PRODUCTS / ENTITLEMENTS / GRANTS =========
+
+model Product {
+  id               String         @id @default(uuid()) @db.Uuid
+  zephr_product_id String         @unique @db.VarChar(255)
+  label            String         @db.VarChar(255)
+  description      String?
+
+  grants           AccountGrant[]
+
+  created_at       DateTime?      @default(now()) @db.Timestamptz(6)
+}
+
+model Entitlement {
+  id                    String         @id @default(uuid()) @db.Uuid
+  zephr_entitlement_id  String         @unique @db.VarChar(255)
+  label                 String?
+  description           String?
+  type                  String?        @db.VarChar(50)
+
+  grants                AccountGrant[]
+
+  created_at            DateTime?      @default(now()) @db.Timestamptz(6)
+}
+
+/// One row per Zephr grant. It can reference either a product OR an entitlement.
+model AccountGrant {
+  id            String     @id @default(uuid()) @db.Uuid
+  account_id    String     @db.Uuid
+  product_id    String?    @db.Uuid
+  entitlement_id String?   @db.Uuid
+
+  // Zephr metadata
+  zephr_grant_id String    @unique @db.VarChar(255)
+  expiry_state   String?   @db.VarChar(50)
+  start_time     DateTime? @db.Timestamptz(6)
+  end_time       DateTime? @db.Timestamptz(6)
+
+  account       Account     @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  product       Product?    @relation(fields: [product_id], references: [id], onDelete: SetNull)
+  entitlement   Entitlement?@relation(fields: [entitlement_id], references: [id], onDelete: SetNull)
+
+  @@index([account_id], map: "grant_by_account")
+  @@index([product_id], map: "grant_by_product")
+  @@index([entitlement_id], map: "grant_by_entitlement")
+}
+
+/// ========= ATTRIBUTE DEFINITIONS (for demographics UI) =========
+
+model AttributeDefinition {
+  slug           String  @id
+  label          String?
+  input_type     String?    // text | select | multiselect | date, etc.
+  required       Boolean?   @default(false)
+  select_options Json?      // array of options for select-like inputs
+}
+
+/// ========= TEMPLATES (optional: export + bulk ops) =========
+
+model Template {
+  id          String   @id @default(uuid()) @db.Uuid
+  account_id  String   @db.Uuid
+  name        String
+  description String?
+  attributes  Json     @default("{}") // the attribute payload you apply to users
+
+  account     Account  @relation(fields: [account_id], references: [id], onDelete: Cascade)
+
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([account_id, name], map: "template_name_per_account")
+  @@index([account_id], map: "template_by_account")
 }

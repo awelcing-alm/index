@@ -1,3 +1,7 @@
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const runtime = 'nodejs'; 
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildUsersCsv, type ExportUsersCsvOptions } from "@/lib/csv";
@@ -17,10 +21,6 @@ function ymd(d = new Date()) {
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-export const runtime = 'nodejs'; 
 
 export async function GET(req: NextRequest) {
   try {

@@ -21,27 +21,29 @@ model account_activity {
 }
 
 model accounts {
-  id                 Int                @id @default(autoincrement())
-  external_id        String             @unique @db.VarChar(255)
-  name               String             @db.VarChar(255)
-  type               String?            @db.VarChar(50)
-  status             String             @db.VarChar(50)
-  industry           String?            @db.VarChar(255)
-  website            String?            @db.VarChar(255)
-  contact_name       String?            @db.VarChar(255)
-  contact_email      String?            @db.VarChar(255)
-  contact_phone      String?            @db.VarChar(50)
+  id                 Int                 @id @default(autoincrement())
+  external_id        String              @unique @db.VarChar(255)
+  name               String              @db.VarChar(255)
+  type               String?             @db.VarChar(50)
+  status             String              @db.VarChar(50)
+  industry           String?             @db.VarChar(255)
+  website            String?             @db.VarChar(255)
+  contact_name       String?             @db.VarChar(255)
+  contact_email      String?             @db.VarChar(255)
+  contact_phone      String?             @db.VarChar(50)
   address            String?
-  total_users        Int?               @default(0)
-  active_users       Int?               @default(0)
-  mrr                Decimal?           @db.Decimal(10, 2)
-  subscription_start DateTime?          @db.Date
-  next_billing       DateTime?          @db.Date
+  total_users        Int?                @default(0)
+  active_users       Int?                @default(0)
+  mrr                Decimal?            @db.Decimal(10, 2)
+  subscription_start DateTime?           @db.Date
+  next_billing       DateTime?           @db.Date
   health_score       Int?
-  rep_id             String?            @db.VarChar(50)
-  created_at         DateTime?          @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime?          @default(now()) @db.Timestamptz(6)
+  rep_id             String?             @db.VarChar(50)
+  created_at         DateTime?           @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime?           @default(now()) @db.Timestamptz(6)
   account_activity   account_activity[]
+  group_memberships  group_memberships[]
+  groups             groups[]
   product_usage      product_usage[]
   subscriptions      subscriptions[]
   top_pages          top_pages[]
@@ -61,11 +63,12 @@ model attribute_definitions {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model group_memberships {
-  account_id       String
   user_external_id String
   group_id         String   @db.Uuid
   assigned_by      String?
   assigned_at      DateTime @default(now()) @db.Timestamptz(6)
+  account_id       Int
+  accounts         accounts @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "gm_account_fk")
   groups           groups   @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users            users    @relation(fields: [user_external_id], references: [external_id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -77,7 +80,6 @@ model group_memberships {
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model groups {
   id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  account_id        String
   slug              String
   name              String
   color             String?             @db.VarChar(7)
@@ -88,11 +90,12 @@ model groups {
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
   user_count        Int                 @default(0)
+  account_id        Int
   group_memberships group_memberships[]
+  accounts          accounts            @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "groups_account_fk")
   users             users[]
 
   @@unique([account_id, slug])
-  @@index([account_id], map: "idx_groups_account")
   @@index([account_id], map: "idx_groups_account_id")
 }
 

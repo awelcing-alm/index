@@ -486,6 +486,175 @@ export async function getUsersByAccount(accountId: string): Promise<ZephrUser[]>
   }
 }
 
+// ---------------------------
+// Helpers for user lifecycle
+// ---------------------------
+
+function parseUserFromAny(response: any): ZephrUser | null {
+  if (!response) return null
+  if (response.data && response.data.user_id) return response.data as ZephrUser
+  if (response.user_id) return response as ZephrUser
+  return null
+}
+
+/**
+ * Try to find a user by email. The Zephr APIs aren’t fully consistent across tenants,
+ * so we probe a couple of common shapes and normalize.
+ */
+export async function getUserByEmail(email: string): Promise<ZephrUser | null> {
+  const enc = encodeURIComponent(email)
+  const candidatePaths = [
+    `/v3/users?email=${enc}`,                 // common
+    `/v3/users?email_address=${enc}`,         // sometimes used
+    `/v3/users/search?email_address=${enc}`,  // alternate search path
+  ]
+
+  for (const path of candidatePaths) {
+    try {
+      const res = await adminApiCall(path)
+      // responses can be {results:[...]}, {data:[...]}, or a plain array
+      const arr: any[] = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.results)
+        ? res.results
+        : Array.isArray(res?.data)
+        ? res.data
+        : []
+
+      const hit = arr.find(
+        (u: any) =>
+          u?.user_id &&
+          (u?.identifiers?.email_address?.toLowerCase?.() === email.toLowerCase() ||
+            u?.user_email?.toLowerCase?.() === email.toLowerCase())
+      )
+      if (hit) {
+        // normalize user shape
+        const user: ZephrUser = {
+          user_id: hit.user_id,
+          identifiers: hit.identifiers ?? { email_address: hit.user_email ?? email },
+          attributes: hit.attributes ?? {},
+          email_verified: !!hit.email_verified,
+          created_date: hit.created_date,
+          modified_date: hit.modified_date,
+          account_id: hit.account_id,
+          user_type: hit.user_type,
+        }
+        return user
+      }
+    } catch (e) {
+      // try next strategy
+      console.warn(`[getUserByEmail] probe failed for ${path}:`, e)
+    }
+  }
+
+  return null
+}
+
+/**
+ * Create a user (minimal body works; add attributes if you have them).
+ */
+export async function createUser(args: {
+  email: string
+  attributes?: Record<string, any>
+  email_verified?: boolean
+}): Promise<ZephrUser> {
+  const body = {
+    identifiers: { email_address: args.email },
+    attributes: args.attributes ?? {},
+    // Some Zephr tenants accept top-level email_verified on create
+    ...(typeof args.email_verified === "boolean" ? { email_verified: args.email_verified } : {}),
+  }
+
+  const resp = await adminApiCall(`/v3/users`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+
+  const user = parseUserFromAny(resp)
+  if (!user) {
+    console.warn(`[createUser] Unexpected create response shape:`, resp)
+    // last-resort normalization
+    return {
+      user_id: resp?.user_id ?? resp?.data?.user_id ?? "",
+      identifiers: resp?.identifiers ?? resp?.data?.identifiers ?? { email_address: args.email },
+      attributes: resp?.attributes ?? resp?.data?.attributes ?? {},
+      email_verified: !!(resp?.email_verified ?? resp?.data?.email_verified),
+    }
+  }
+  return user
+}
+
+/**
+ * Update core user fields (e.g., email_verified). This is different from your
+ * existing updateUserAttributes(), which only touches the /attributes subresource.
+ */
+export async function updateUser(userId: string, patch: Partial<Pick<ZephrUser, "email_verified" | "attributes" | "user_type">>) {
+  const resp = await adminApiCall(`/v3/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  })
+  return parseUserFromAny(resp) ?? resp
+}
+
+/**
+ * Ensure a user exists for an email. If found, optionally mark verified; else create.
+ */
+export async function ensureUserExists(
+  email: string,
+  opts?: { emailVerified?: boolean; attributes?: Record<string, any> }
+): Promise<{ user: ZephrUser; created: boolean }> {
+  // 1) try to find
+  const existing = await getUserByEmail(email)
+  if (existing) {
+    if (opts?.emailVerified && !existing.email_verified) {
+      try {
+        await updateUser(existing.user_id, { email_verified: true })
+        existing.email_verified = true
+      } catch (e) {
+        console.warn(`[ensureUserExists] Failed to set email_verified on existing user ${existing.user_id}:`, e)
+      }
+    }
+    return { user: existing, created: false }
+  }
+
+  // 2) create
+  const user = await createUser({
+    email,
+    email_verified: !!opts?.emailVerified,
+    attributes: opts?.attributes,
+  })
+  return { user, created: true }
+}
+
+/**
+ * Attach user to an account. Different Zephr setups use different endpoints:
+ *  - POST /v3/accounts/{accountId}/users { user_id }
+ *  - PUT  /v3/accounts/{accountId}/users/{userId}
+ * We’ll try POST first, then fall back to PUT.
+ */
+export async function addUserToAccount(accountId: string, userId: string) {
+  // Preferred: POST with body
+  try {
+    return await adminApiCall(`/v3/accounts/${accountId}/users`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    })
+  } catch (e) {
+    console.warn(`[addUserToAccount] POST failed, will try PUT style:`, e)
+  }
+
+  // Fallback: id in path
+  return adminApiCall(`/v3/accounts/${accountId}/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify({}), // some tenants require a body; harmless if ignored
+  })
+}
+
+// Friendly alias to match the UI route example I gave you earlier:
+export const attachUserToAccount = (args: { accountId: string; userExternalId: string }) =>
+  addUserToAccount(args.accountId, args.userExternalId)
+
+
 export async function getProductsByAccount(accountId: string): Promise<ZephrProductWithGrant[]> {
   console.log(`\n[getProductsByAccount] === Starting for account ID: ${accountId} ===`)
 

@@ -1,56 +1,49 @@
-// app/api/templates/route.ts – list all template names, create/update custom template
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { listTpls, saveTpl } from "@/lib/blob";
-import { DEFAULT_TEMPLATES } from "@/lib/template-defaults";
+import { prisma } from "@/lib/prisma";
+import { applyRlsFromRequest } from "@/lib/rls";
 
-// cookies() is synchronous in the latest types; no await needed
-// cookies() returns a Promise in this runtime – use await
-const getAccountId = async () => (await cookies()).get("active_account_id")?.value;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-/* ----------------------------- GET ------------------------------ */
-export async function GET() {
-    const accId = await getAccountId();
-  if (!accId) return NextResponse.json([], { status: 200 });
-
+export async function GET(req: NextRequest) {
   try {
-    const custom = await listTpls(accId);
-    const names = [
-      ...DEFAULT_TEMPLATES.map((t) => t.name),
-      ...custom.filter((n) => !DEFAULT_TEMPLATES.some((d) => d.name === n)),
-    ];
-    return NextResponse.json(names);
+    await applyRlsFromRequest(req);
+
+    const zephrAccountId = req.cookies.get("active_account_id")?.value;
+    if (!zephrAccountId) {
+      return NextResponse.json({ error: "No active account" }, { status: 401 });
+    }
+
+    const account = await prisma.accounts.findFirst({
+      where: { external_id: zephrAccountId },
+      select: { id: true },
+    });
+    if (!account) {
+      return NextResponse.json({ error: "Account not found" }, { status: 404 });
+    }
+
+    const results = await prisma.templates.findMany({
+      where: { account_id: account.id },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        account_id: true,
+        name: true,
+        description: true,
+        attributes: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+
+    return NextResponse.json({ results });
   } catch (err: any) {
-    console.error("[templates GET]", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("Templates GET error:", err);
+    return NextResponse.json({ error: "Failed to fetch templates" }, { status: 500 });
   }
 }
 
-/* ----------------------------- POST ----------------------------- */
-export async function POST(req: NextRequest) {
-    const accId = await getAccountId();
-  if (!accId) return NextResponse.json({ error: "No account" }, { status: 400 });
-
-  const { name, description = "", attributes = {}, products = {} } = await req.json();
-  if (!name || typeof name !== "string") {
-    return NextResponse.json({ error: "Name required" }, { status: 400 });
-  }
-  if (DEFAULT_TEMPLATES.some((d) => d.name === name)) {
-    return NextResponse.json({ error: "Cannot overwrite default template" }, { status: 403 });
-  }
-
-  try {
-    await saveTpl(accId, name, {
-      name,
-      description,
-      attributes,
-      products,
-      createdAt: new Date().toISOString(),
-      isDefault: false,
-    });
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    console.error("[templates POST]", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: { Allow: "GET, OPTIONS" } });
 }

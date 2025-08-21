@@ -1,0 +1,247 @@
+-- CreateTable
+CREATE TABLE "public"."accounts" (
+    "id" UUID NOT NULL,
+    "external_id" VARCHAR(255) NOT NULL,
+    "name" VARCHAR(255) NOT NULL,
+    "email_address" VARCHAR(255),
+    "number_of_seats" INTEGER,
+    "tenant_id" VARCHAR(255),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL,
+
+    CONSTRAINT "accounts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."users" (
+    "id" UUID NOT NULL,
+    "external_id" VARCHAR(255) NOT NULL,
+    "email" VARCHAR(320) NOT NULL,
+    "attributes" JSONB DEFAULT '{}',
+    "email_verified" BOOLEAN DEFAULT false,
+    "firstname" VARCHAR(255),
+    "lastname" VARCHAR(255),
+    "role" VARCHAR(50),
+    "status" VARCHAR(50),
+    "last_login" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL,
+
+    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."user_accounts" (
+    "user_id" UUID NOT NULL,
+    "account_id" UUID NOT NULL,
+    "role" VARCHAR(50),
+    "status" VARCHAR(50),
+
+    CONSTRAINT "user_accounts_pkey" PRIMARY KEY ("user_id","account_id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."groups" (
+    "id" UUID NOT NULL,
+    "account_id" UUID NOT NULL,
+    "slug" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "icon" VARCHAR(32),
+    "color" VARCHAR(7),
+    "demographics" JSONB NOT NULL DEFAULT '{}',
+    "default_template_id" UUID,
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL,
+
+    CONSTRAINT "groups_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."group_memberships" (
+    "group_id" UUID NOT NULL,
+    "user_id" UUID NOT NULL,
+    "assigned_by" TEXT,
+    "assigned_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "group_memberships_pkey" PRIMARY KEY ("group_id","user_id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."newsletters" (
+    "id" UUID NOT NULL,
+    "name" VARCHAR(255) NOT NULL,
+    "description" TEXT,
+    "created_at" TIMESTAMPTZ(6) DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "newsletters_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."user_newsletters" (
+    "user_id" UUID NOT NULL,
+    "newsletter_id" UUID NOT NULL,
+    "subscribed" BOOLEAN NOT NULL DEFAULT true,
+    "open_rate" DECIMAL(5,2) DEFAULT 0,
+    "click_rate" DECIMAL(5,2) DEFAULT 0,
+    "created_at" TIMESTAMPTZ(6) DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6),
+
+    CONSTRAINT "user_newsletters_pkey" PRIMARY KEY ("user_id","newsletter_id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."products" (
+    "id" UUID NOT NULL,
+    "zephr_product_id" VARCHAR(255) NOT NULL,
+    "label" VARCHAR(255) NOT NULL,
+    "description" TEXT,
+    "created_at" TIMESTAMPTZ(6) DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "products_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."entitlements" (
+    "id" UUID NOT NULL,
+    "zephr_entitlement_id" VARCHAR(255) NOT NULL,
+    "label" TEXT,
+    "description" TEXT,
+    "type" VARCHAR(50),
+    "created_at" TIMESTAMPTZ(6) DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "entitlements_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."account_grants" (
+    "id" UUID NOT NULL,
+    "account_id" UUID NOT NULL,
+    "product_id" UUID,
+    "entitlement_id" UUID,
+    "zephr_grant_id" VARCHAR(255) NOT NULL,
+    "expiry_state" VARCHAR(50),
+    "start_time" TIMESTAMPTZ(6),
+    "end_time" TIMESTAMPTZ(6),
+
+    CONSTRAINT "account_grants_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."attribute_definitions" (
+    "slug" TEXT NOT NULL,
+    "label" TEXT,
+    "input_type" TEXT,
+    "required" BOOLEAN DEFAULT false,
+    "select_options" JSONB,
+
+    CONSTRAINT "attribute_definitions_pkey" PRIMARY KEY ("slug")
+);
+
+-- CreateTable
+CREATE TABLE "public"."templates" (
+    "id" UUID NOT NULL,
+    "account_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "attributes" JSONB NOT NULL DEFAULT '{}',
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ(6) NOT NULL,
+
+    CONSTRAINT "templates_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "accounts_external_id_key" ON "public"."accounts"("external_id");
+
+-- CreateIndex
+CREATE INDEX "acct_by_external" ON "public"."accounts"("external_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_external_id_key" ON "public"."users"("external_id");
+
+-- CreateIndex
+CREATE INDEX "user_by_email" ON "public"."users"("email");
+
+-- CreateIndex
+CREATE INDEX "user_by_external" ON "public"."users"("external_id");
+
+-- CreateIndex
+CREATE INDEX "ua_by_account_user" ON "public"."user_accounts"("account_id", "user_id");
+
+-- CreateIndex
+CREATE INDEX "group_by_account" ON "public"."groups"("account_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "group_slug_per_account" ON "public"."groups"("account_id", "slug");
+
+-- CreateIndex
+CREATE INDEX "gm_by_user" ON "public"."group_memberships"("user_id");
+
+-- CreateIndex
+CREATE INDEX "gm_by_group" ON "public"."group_memberships"("group_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "newsletters_name_key" ON "public"."newsletters"("name");
+
+-- CreateIndex
+CREATE INDEX "un_by_newsletter" ON "public"."user_newsletters"("newsletter_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "products_zephr_product_id_key" ON "public"."products"("zephr_product_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "entitlements_zephr_entitlement_id_key" ON "public"."entitlements"("zephr_entitlement_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "account_grants_zephr_grant_id_key" ON "public"."account_grants"("zephr_grant_id");
+
+-- CreateIndex
+CREATE INDEX "grant_by_account" ON "public"."account_grants"("account_id");
+
+-- CreateIndex
+CREATE INDEX "grant_by_product" ON "public"."account_grants"("product_id");
+
+-- CreateIndex
+CREATE INDEX "grant_by_entitlement" ON "public"."account_grants"("entitlement_id");
+
+-- CreateIndex
+CREATE INDEX "template_by_account" ON "public"."templates"("account_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "template_name_per_account" ON "public"."templates"("account_id", "name");
+
+-- AddForeignKey
+ALTER TABLE "public"."user_accounts" ADD CONSTRAINT "user_accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+-- AddForeignKey
+ALTER TABLE "public"."user_accounts" ADD CONSTRAINT "user_accounts_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+-- AddForeignKey
+ALTER TABLE "public"."groups" ADD CONSTRAINT "groups_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."groups" ADD CONSTRAINT "groups_default_template_id_fkey" FOREIGN KEY ("default_template_id") REFERENCES "public"."templates"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."group_memberships" ADD CONSTRAINT "group_memberships_group_id_fkey" FOREIGN KEY ("group_id") REFERENCES "public"."groups"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."group_memberships" ADD CONSTRAINT "group_memberships_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."user_newsletters" ADD CONSTRAINT "user_newsletters_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."user_newsletters" ADD CONSTRAINT "user_newsletters_newsletter_id_fkey" FOREIGN KEY ("newsletter_id") REFERENCES "public"."newsletters"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."account_grants" ADD CONSTRAINT "account_grants_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."account_grants" ADD CONSTRAINT "account_grants_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."account_grants" ADD CONSTRAINT "account_grants_entitlement_id_fkey" FOREIGN KEY ("entitlement_id") REFERENCES "public"."entitlements"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."templates" ADD CONSTRAINT "templates_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;

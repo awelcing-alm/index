@@ -2,7 +2,7 @@
 import { Suspense } from "react"
 
 /* ---------- server helpers ---------- */
-import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
+import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/zephr-api"
 import { listGroups } from "@/lib/groups"
 
 /* ---------- ui ---------- */

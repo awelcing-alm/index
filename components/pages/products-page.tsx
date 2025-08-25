@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Calendar, Package, AlertTriangle, Info } from "lucide-react";
-import { getProductsForCurrentAccount, getCurrentUser } from "@/lib/auth-actions";
+import { getProductsForCurrentAccount, getCurrentUser } from "@/lib/zephr-api";
 
 /* Helper: safe date format */
 function formatDate(dateString: string): string {

@@ -1,6 +1,6 @@
 // app/api/sync/users/route.ts
 import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/auth-actions"
+import { getCurrentUser } from "@/lib/zephr-api"
 import { syncUsersForAccount } from "@/lib/sync-users"
 
 /**

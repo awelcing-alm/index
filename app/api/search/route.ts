@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { sql } from "@/lib/db"
-import { getCurrentUser } from "@/lib/auth-actions"
+import { getCurrentUser } from "@/lib/zephr-api"
 
 /**
  * GET /api/search?q=term&limit=8&only=users|groups|templates

@@ -1,6 +1,6 @@
 // app/api/products/route.ts
 import { NextResponse } from "next/server"
-import { getProductsForCurrentAccount } from "@/lib/auth-actions"
+import { getProductsForCurrentAccount } from "@/lib/zephr-api"
 
 export const dynamic = "force-dynamic"
 

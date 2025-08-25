@@ -6,238 +6,203 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")   // pooler :6543
-  directUrl = env("DIRECT_URL")     // direct :5432 for migrate
+  url       = env("DATABASE_URL") // pooler :6543
+  directUrl = env("DIRECT_URL") // direct :5432 for migrate
 }
 
-/* ============================================================
-   ACCOUNTS / USERS / MEMBERSHIP (Zephr-aligned, multi-tenant)
-   ============================================================ */
+/**
+ * ============================================================
+ * ACCOUNTS / USERS / MEMBERSHIP (Zephr-aligned, multi-tenant)
+ * ============================================================
+ */
 
-model accounts {
-  /// UUID PK we control locally
-  id               String           @id @default(uuid()) @db.Uuid
+model Account {
+  id              String  @id @default(uuid()) @db.Uuid
+  external_id     String  @unique @db.VarChar(255) // Zephr account id
+  name            String  @db.VarChar(255)
+  email_address   String? @db.VarChar(255)
+  number_of_seats Int?
+  tenant_id       String? @db.VarChar(255)
 
-  /// Zephr account natural id (what your cookies carry). Keep unique.
-  external_id      String           @unique @db.VarChar(255)
+  users       UserAccount[]
+  groups      Group[]
+  grants      AccountGrant[]
+  templates   Template[] // <— back relation for Template.account
+  memberships GroupMembership[] // <— back relation for GroupMembership.account
 
-  name             String           @db.VarChar(255)
-  email_address    String?          @db.VarChar(255)
-  number_of_seats  Int?
-  tenant_id        String?          @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
 
-  // relations
-  user_accounts    user_accounts[]
-  groups           groups[]
-  account_grants   account_grants[]
-  templates        templates[]
-
-  // timestamps
-  created_at       DateTime         @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime         @updatedAt @db.Timestamptz(6)
-
-  @@index([external_id], map: "acct_by_external")
+  @@index([external_id], map: "acct_by_external_id")
 }
 
-model users {
-  /// UUID PK we control locally
-  id              String            @id @default(uuid()) @db.Uuid
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  external_id    String   @unique @db.VarChar(255) // Zephr user id
+  email          String   @db.VarChar(320)
+  attributes     Json?    @default("{}")
+  email_verified Boolean? @default(false)
 
-  /// Zephr user natural id; your UI often passes this around. Keep unique.
-  external_id     String            @unique @db.VarChar(255)
+  firstname      String?   @db.VarChar(255)
+  lastname       String?   @db.VarChar(255)
+  role           String?   @db.VarChar(50)
+  status         String?   @db.VarChar(50)
+  last_login     DateTime? @db.Timestamptz(6)
+  last_synced_at DateTime? @db.Timestamptz(6)
 
-  email           String            @db.VarChar(320)
+  accounts       UserAccount[]
+  memberships    GroupMembership[] // <— back relation for GroupMembership.user
+  newsletterSubs UserNewsletter[]
 
-  // Zephr attributes (demographics etc) stored as JSON for export & UI
-  attributes      Json?             @default("{}")
-  email_verified  Boolean?          @default(false)
-
-  // convenience profile-ish fields
-  firstname       String?           @db.VarChar(255)
-  lastname        String?           @db.VarChar(255)
-  role            String?           @db.VarChar(50)      // "owner" | "admin" | "user"
-  status          String?           @db.VarChar(50)      // "active" | "inactive"
-  last_login      DateTime?         @db.Timestamptz(6)
-
-  // relations
-  user_accounts   user_accounts[]
-  group_memberships group_memberships[]
-  user_newsletters user_newsletters[]
-
-  // timestamps
-  created_at      DateTime          @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime          @updatedAt @db.Timestamptz(6)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([email], map: "user_by_email")
   @@index([external_id], map: "user_by_external")
 }
 
-model user_accounts {
-  /// M2M (users ↔ accounts) + per-tenant role/status if desired
-  user_id     String  @db.Uuid
-  account_id  String  @db.Uuid
-  role        String? @db.VarChar(50)
-  status      String? @db.VarChar(50)
+model UserAccount {
+  user_id    String  @db.Uuid
+  account_id String  @db.Uuid
+  role       String? @db.VarChar(50)
+  status     String? @db.VarChar(50)
 
-  users       users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  accounts    accounts @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [account_id], references: [id], onDelete: Cascade)
 
   @@id([user_id, account_id])
   @@index([account_id, user_id], map: "ua_by_account_user")
 }
 
-/* ========================================
-   GROUPS & MEMBERSHIPS (per-account groups)
-   ======================================== */
+model Group {
+  id                  String  @id @default(uuid()) @db.Uuid
+  account_id          String  @db.Uuid
+  slug                String
+  name                String
+  icon                String? @db.VarChar(32)
+  color               String? @db.VarChar(7)
+  demographics        Json    @default("{}")
+  default_template_id String? @db.Uuid
+  user_count          Int     @default(0)
 
-model groups {
-  id                    String             @id @default(uuid()) @db.Uuid
-  account_id            String             @db.Uuid
-  slug                  String
-  name                  String
-  icon                  String?            @db.VarChar(32)
-  color                 String?            @db.VarChar(7) // e.g. #RRGGBB
-  demographics          Json               @default("{}")
+  account          Account           @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  // Named relation on BOTH sides:
+  default_template Template?         @relation("Group_default_template", fields: [default_template_id], references: [id], onDelete: SetNull)
+  memberships      GroupMembership[]
 
-  /// Optional default template; nullable FK
-  default_template_id   String?            @db.Uuid
-
-  accounts              accounts           @relation(fields: [account_id], references: [id], onDelete: Cascade)
-  /// Named relation so Prisma can pair it with Template.groups_using_default
-  default_template      templates?         @relation("GroupDefaultTemplate", fields: [default_template_id], references: [id], onDelete: SetNull)
-
-  group_memberships     group_memberships[]
-
-  created_at            DateTime           @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime           @updatedAt @db.Timestamptz(6)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
 
   @@unique([account_id, slug], map: "group_slug_per_account")
   @@index([account_id], map: "group_by_account")
 }
 
-model group_memberships {
-  group_id     String   @db.Uuid
-  user_id      String   @db.Uuid
+model GroupMembership {
+  // Single membership per (account, user_external_id)
+  account_id       String @db.Uuid
+  user_external_id String @db.VarChar(255) // references User.external_id (unique)
+  group_id         String @db.Uuid
 
-  groups       groups   @relation(fields: [group_id], references: [id], onDelete: Cascade)
-  users        users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [account_id], references: [id], onDelete: Cascade) // back: Account.memberships
+  user    User    @relation(fields: [user_external_id], references: [external_id], onDelete: Cascade) // back: User.memberships
+  group   Group   @relation(fields: [group_id], references: [id], onDelete: Cascade)
 
-  assigned_by  String?
-  assigned_at  DateTime @default(now()) @db.Timestamptz(6)
+  assigned_by String?
+  assigned_at DateTime @default(now()) @db.Timestamptz(6)
 
-  @@id([group_id, user_id])
-  @@index([user_id], map: "gm_by_user")
+  @@id([account_id, user_external_id])
   @@index([group_id], map: "gm_by_group")
+  @@index([user_external_id], map: "gm_by_user_external")
 }
 
-/* ======================
-   NEWSLETTERS & SUBSCRIBERS
-   ====================== */
+model Newsletter {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @unique @db.VarChar(255)
+  description String?
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
 
-model newsletters {
-  id           String            @id @default(uuid()) @db.Uuid
-  name         String            @unique @db.VarChar(255)
-  description  String?
-  created_at   DateTime?         @default(now()) @db.Timestamptz(6)
-
-  user_newsletters user_newsletters[]
+  subscribers UserNewsletter[]
 }
 
-model user_newsletters {
-  user_id        String      @db.Uuid
-  newsletter_id  String      @db.Uuid
-  subscribed     Boolean     @default(true)
-  open_rate      Decimal?    @default(0) @db.Decimal(5, 2)
-  click_rate     Decimal?    @default(0) @db.Decimal(5, 2)
-  created_at     DateTime?   @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime?   @updatedAt @db.Timestamptz(6)
+model UserNewsletter {
+  user_id       String    @db.Uuid
+  newsletter_id String    @db.Uuid
+  subscribed    Boolean   @default(true)
+  open_rate     Decimal?  @default(0) @db.Decimal(5, 2)
+  click_rate    Decimal?  @default(0) @db.Decimal(5, 2)
+  created_at    DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime? @default(now()) @db.Timestamptz(6)
 
-  users          users        @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  newsletters    newsletters  @relation(fields: [newsletter_id], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  newsletter Newsletter @relation(fields: [newsletter_id], references: [id], onDelete: Cascade)
 
   @@id([user_id, newsletter_id])
   @@index([newsletter_id], map: "un_by_newsletter")
 }
 
-/* ==========================================
-   PRODUCTS / ENTITLEMENTS / ACCOUNT GRANTS
-   ========================================== */
+model Product {
+  id               String  @id @default(uuid()) @db.Uuid
+  zephr_product_id String  @unique @db.VarChar(255)
+  label            String  @db.VarChar(255)
+  description      String?
 
-model products {
-  id                String         @id @default(uuid()) @db.Uuid
-  zephr_product_id  String         @unique @db.VarChar(255)
-  label             String         @db.VarChar(255)
-  description       String?
+  grants AccountGrant[]
 
-  account_grants    account_grants[]
-
-  created_at        DateTime?      @default(now()) @db.Timestamptz(6)
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
 }
 
-model entitlements {
-  id                       String         @id @default(uuid()) @db.Uuid
-  zephr_entitlement_id     String         @unique @db.VarChar(255)
-  label                    String?
-  description              String?
-  type                     String?        @db.VarChar(50)
+model Entitlement {
+  id                   String  @id @default(uuid()) @db.Uuid
+  zephr_entitlement_id String  @unique @db.VarChar(255)
+  label                String?
+  description          String?
+  type                 String? @db.VarChar(50)
 
-  account_grants           account_grants[]
+  grants AccountGrant[]
 
-  created_at               DateTime?      @default(now()) @db.Timestamptz(6)
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
 }
 
-/// One row per Zephr grant. It can reference either a product OR an entitlement.
-model account_grants {
-  id              String       @id @default(uuid()) @db.Uuid
-  account_id      String       @db.Uuid
-  product_id      String?      @db.Uuid
-  entitlement_id  String?      @db.Uuid
+model AccountGrant {
+  id             String  @id @default(uuid()) @db.Uuid
+  account_id     String  @db.Uuid
+  product_id     String? @db.Uuid
+  entitlement_id String? @db.Uuid
 
-  // Zephr metadata
-  zephr_grant_id  String       @unique @db.VarChar(255)
-  expiry_state    String?      @db.VarChar(50)
-  start_time      DateTime?    @db.Timestamptz(6)
-  end_time        DateTime?    @db.Timestamptz(6)
+  zephr_grant_id String    @unique @db.VarChar(255)
+  expiry_state   String?   @db.VarChar(50)
+  start_time     DateTime? @db.Timestamptz(6)
+  end_time       DateTime? @db.Timestamptz(6)
 
-  accounts        accounts     @relation(fields: [account_id], references: [id], onDelete: Cascade)
-  products        products?    @relation(fields: [product_id], references: [id], onDelete: SetNull)
-  entitlements    entitlements?@relation(fields: [entitlement_id], references: [id], onDelete: SetNull)
+  account     Account      @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  product     Product?     @relation(fields: [product_id], references: [id], onDelete: SetNull)
+  entitlement Entitlement? @relation(fields: [entitlement_id], references: [id], onDelete: SetNull)
 
   @@index([account_id], map: "grant_by_account")
   @@index([product_id], map: "grant_by_product")
   @@index([entitlement_id], map: "grant_by_entitlement")
 }
 
-/* ======================================
-   ATTRIBUTE DEFINITIONS (Demographics UI)
-   ====================================== */
-
-model attribute_definitions {
+model AttributeDefinition {
   slug           String   @id
   label          String?
-  input_type     String?     // e.g. text | select | multiselect | date
-  required       Boolean?    @default(false)
+  input_type     String?
+  required       Boolean? @default(false)
   select_options Json?
 }
 
-/* =========================
-   TEMPLATES (per account)
-   ========================= */
-
-model templates {
-  id          String   @id @default(uuid()) @db.Uuid
-  account_id  String   @db.Uuid
+model Template {
+  id          String  @id @default(uuid()) @db.Uuid
+  account_id  String  @db.Uuid
   name        String
   description String?
-  attributes  Json     @default("{}") // the attribute payload you apply to users
+  attributes  Json    @default("{}")
 
-  accounts    accounts @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [account_id], references: [id], onDelete: Cascade) // back: Account.templates
+  groups  Group[] @relation("Group_default_template") // back: Group.default_template
 
-  /// Back-relation so Prisma can pair it with groups.default_template
-  groups_using_default groups[] @relation("GroupDefaultTemplate")
-
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime @updatedAt @db.Timestamptz(6)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
 
   @@unique([account_id, name], map: "template_name_per_account")
   @@index([account_id], map: "template_by_account")

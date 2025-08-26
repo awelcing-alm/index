@@ -61,11 +61,14 @@ import {
   X,
 } from "lucide-react"
 
+import { GroupIconInline } from "@/components/group-icon"
+
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
 
+/* ====================== types ====================== */
 export type GroupWithCount = Group & { user_count?: number }
 export type UiUser = {
   user_id: string
@@ -77,24 +80,9 @@ export type UiUser = {
   group_name?: string | null
 }
 
-const GROUP_ICON_EMOJI: Record<string, string> = {
-  scale: "⚖️",
-  bank: "🏛️",
-  clipboard: "📋",
-  shield: "🛡️",
-  user: "👤",
-  users: "👥",
-  briefcase: "💼",
-  file: "📄",
-  chart: "📈",
-  pie: "📊",
-  gavel: "🔨",
-  building: "🏢",
-  folder: "🗂️",
-  book: "📘",
-}
+type Membership = { group_id: string; name: string | null; icon: string | null }
 
-/** Ensure <tr> has only element children (prevents whitespace hydration errors). */
+/* Ensure <tr> has only element children (prevents whitespace hydration errors). */
 const StrictRow = ({
   className,
   children,
@@ -108,7 +96,7 @@ const StrictRow = ({
   </TableRow>
 )
 
-/* ---------------- helpers for robust group resolution ---------------- */
+/* ---------------- helpers ---------------- */
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -150,14 +138,26 @@ async function fetchJson(url: string, init?: RequestInit) {
     headers: { Accept: "application/json", ...(init?.headers || {}) },
     ...init,
   })
-  // Read as text first; sometimes error pages or empty bodies occur
   const raw = await res.text().catch(() => "")
   let data: any = null
-  try { data = raw ? JSON.parse(raw) : null } catch { /* non-JSON */ }
+  try {
+    data = raw ? JSON.parse(raw) : null
+  } catch {}
   return { res, data, raw }
 }
 
-/* ---------------- component ---------------- */
+function coerceBoolMap(obj: any): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  if (!obj || typeof obj !== "object") return out
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "boolean") out[k] = v
+    else if (v === "true" || v === "false") out[k] = v === "true"
+    else out[k] = Boolean(v)
+  }
+  return out
+}
+
+/* ====================== component ====================== */
 export default function UsersTable({
   users,
   groups,
@@ -165,18 +165,45 @@ export default function UsersTable({
   users: UiUser[]
   groups: GroupWithCount[]
 }) {
-  /* ---------------- data source ---------------- */
+  /* data */
   const [rows, setRows] = useState(users)
   useEffect(() => setRows(users), [users])
 
-  /* ---------------- selection / UI state ---------------- */
+  /* selection / ui */
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(true)
   const [, startTransition] = useTransition()
 
-  /* ---------------- groups lookup maps ---------------- */
+  /* template names (defaults + custom) */
+  const [templateNames, setTemplateNames] = useState<string[]>([])
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const res = await fetch("/api/templates?scope=all&format=array", {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        })
+        const payload = await res.json().catch(() => null)
+        const apiNames: string[] =
+          Array.isArray(payload) ? payload :
+          Array.isArray(payload?.names) ? payload.names :
+          Array.isArray(payload?.data) ? payload.data : []
+        const merged = Array.from(
+          new Set([...DEFAULT_TEMPLATES.map((t) => t.name), ...apiNames]),
+        ).sort()
+        if (alive) setTemplateNames(merged)
+      } catch {
+        const fallbacks = DEFAULT_TEMPLATES.map((t) => t.name).sort()
+        if (alive) setTemplateNames(fallbacks)
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  /* groups lookup */
   const groupById = useMemo(
     () => Object.fromEntries(groups.map((g) => [g.id, g] as const)),
     [groups],
@@ -194,8 +221,68 @@ export default function UsersTable({
     [groups],
   )
 
+  /* ----------- MEMBERSHIP HYDRATION (GLOBAL) ----------- */
+  const [membershipByUser, setMembershipByUser] = useState<Record<string, Membership>>({})
+  const hydratedAllRef = useRef(false)
+
+  // Batch-membership load so filters work before visiting pages
+  useEffect(() => {
+    if (!users?.length) {
+      hydratedAllRef.current = true
+      setMembershipByUser({})
+      return
+    }
+    const CHUNK = 200
+    let cancelled = false
+
+    ;(async () => {
+      const userIds = users.map((u) => u.user_id)
+      const chunks: string[][] = []
+      for (let i = 0; i < userIds.length; i += CHUNK) {
+        chunks.push(userIds.slice(i, i + CHUNK))
+      }
+
+      const aggregate: Record<string, Membership> = {}
+      for (const ids of chunks) {
+        if (cancelled) return
+        const qs = encodeURIComponent(ids.join(","))
+        const { res, data } = await fetchJson(`/api/groups/membership?user_ids=${qs}`)
+        if (!res.ok || !data?.ok) continue
+        Object.assign(aggregate, data.memberships || {})
+      }
+
+      if (cancelled) return
+
+      hydratedAllRef.current = true
+      setMembershipByUser(aggregate)
+
+      // Merge into rows so filtering sees group_id for *all* rows
+      setRows((prev) =>
+        prev.map((u) => {
+          const m = aggregate[u.user_id]
+          return m
+            ? {
+                ...u,
+                group_id: m.group_id,
+                group_icon: m.icon,
+                group_name: m.name ?? undefined,
+              }
+            : u
+        }),
+      )
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [users])
+
+  /* ----------- resolve group for a row (uses membership map first) ----------- */
   const resolveGroupForRow = useCallback(
     (row: UiUser): GroupWithCount | null => {
+      const m = membershipByUser[row.user_id]
+      if (m?.group_id && groupById[m.group_id]) return groupById[m.group_id]
+
       if (row.group_id && groupById[row.group_id]) return groupById[row.group_id]
       const raw = getRawGroupValue(row)
       if (!raw) return null
@@ -210,10 +297,10 @@ export default function UsersTable({
       if (groupBySlugifiedName[vSlug]) return groupBySlugifiedName[vSlug]
       return null
     },
-    [groupById, groupByNameLower, groupBySlug, groupBySlugifiedName],
+    [membershipByUser, groupById, groupByNameLower, groupBySlug, groupBySlugifiedName],
   )
 
-  /* ---------------- persistent counts (seeded from DB) ---------------- */
+  /* ----------- counts (seeded) ----------- */
   const [counts, setCounts] = useState<Record<string, number>>(
     () => Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0] as const)),
   )
@@ -221,36 +308,33 @@ export default function UsersTable({
     setCounts(Object.fromEntries(groups.map((g) => [g.id, g.user_count ?? 0] as const)))
   }, [groups])
 
-  /* ---------------- memberships hydration ---------------- */
+  /* ----------- PAGE hydration (kept for freshness; cheap) ----------- */
   const refreshMemberships = useCallback(async (userIds: string[]) => {
     if (!userIds.length) return
     try {
       const qs = encodeURIComponent(userIds.join(","))
       const res = await fetch(`/api/groups/membership?user_ids=${qs}`, {
         cache: "no-store",
-        headers: { Accept: "application/json" }, // be explicit
+        headers: { Accept: "application/json" },
       })
       if (!res.ok) return
-      const payload = (await res.json()) as {
-        ok: boolean
-        memberships: Record<
-          string,
-          { group_id: string; name: string | null; icon: string | null }
-        >
-      }
+      const payload = (await res.json()) as { ok: boolean; memberships: Record<string, Membership> }
       if (!payload?.ok) return
       const byUser = payload.memberships || {}
+
+      // cache + rows
       startTransition(() => {
+        setMembershipByUser((prev) => ({ ...prev, ...byUser }))
         setRows((prev) =>
           prev.map((u) => {
             const m = byUser[u.user_id]
             return m
               ? {
-                ...u,
-                group_id: m.group_id,
-                group_icon: m.icon,
-                group_name: m.name ?? undefined,
-              }
+                  ...u,
+                  group_id: m.group_id,
+                  group_icon: m.icon,
+                  group_name: m.name ?? undefined,
+                }
               : u
           }),
         )
@@ -260,7 +344,7 @@ export default function UsersTable({
     }
   }, [])
 
-  /* ---------------- TanStack Table setup (controlled) ---------------- */
+  /* ================== table ================== */
   const PER_PAGE = 25
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -270,7 +354,6 @@ export default function UsersTable({
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [sorting, setSorting] = useState<SortingState>([])
 
-  // Global filter on (name OR email)
   const globalFilterFn: FilterFn<UiUser> = (row, _columnId, filterValue) => {
     const q = String(filterValue ?? "").trim().toLowerCase()
     if (!q) return true
@@ -283,7 +366,6 @@ export default function UsersTable({
     return email.includes(q) || name.includes(q)
   }
 
-  // Page-select helper that targets only the visible (paginated) rows
   const setAllOnPage = (checked: boolean, tbl: any) => {
     setRowSelection((prev) => {
       if (!checked) {
@@ -299,7 +381,6 @@ export default function UsersTable({
 
   const col = createColumnHelper<UiUser>()
   const columns: ColumnDef<UiUser, any>[] = [
-    // Selection column
     {
       id: "select",
       header: ({ table }) => (
@@ -325,8 +406,6 @@ export default function UsersTable({
       enableHiding: false,
       size: 36,
     },
-
-    // Name
     col.display({
       id: "name",
       header: () => <span className="text-ink">User</span>,
@@ -347,8 +426,6 @@ export default function UsersTable({
         return get(a.original).localeCompare(get(b.original))
       },
     }),
-
-    // Email
     col.accessor((u) => u.identifiers.email_address, {
       id: "email",
       header: () => <span className="text-ink">Email</span>,
@@ -359,7 +436,7 @@ export default function UsersTable({
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(email)
-              } catch { }
+              } catch {}
             }}
             className="underline decoration-dotted text-[hsl(var(--muted-foreground))] hover:opacity-80"
             title="Click to copy"
@@ -372,22 +449,16 @@ export default function UsersTable({
       enableColumnFilter: true,
       filterFn: "includesString",
     }),
-
-    // Group (resolved)
     col.display({
       id: "group",
       header: () => <span className="text-ink">Group</span>,
       cell: ({ row }) => {
         const u = row.original
         const g = resolveGroupForRow(u)
-        const iconKey = (u.group_icon ?? g?.icon ?? "") as string
-        const icon = GROUP_ICON_EMOJI[iconKey] ?? "📁"
+        const iconId = (u.group_icon ?? g?.icon ?? "folder") as string
         const title = g?.name ?? u.group_name ?? "Group"
-        return (
-          <span className="text-lg leading-none" title={title} aria-label={title}>
-            {icon}
-          </span>
-        )
+        const color = g?.color ?? undefined
+        return <GroupIconInline icon={iconId} color={color} title={title} className="h-4 w-4" />
       },
       enableColumnFilter: true,
       filterFn: (row, _id, value: string) => {
@@ -396,8 +467,6 @@ export default function UsersTable({
         return (g?.id ?? "") === value
       },
     }),
-
-    // Role
     col.accessor((u) => (u.user_type === "owner" ? "Owner" : "User"), {
       id: "role",
       header: () => <span className="text-ink">Role</span>,
@@ -413,11 +482,8 @@ export default function UsersTable({
           </Badge>
         )
       },
-      enableColumnFilter: true,
-      filterFn: "equalsString",
+      enableColumnFilter: false,
     }),
-
-    // Edit
     col.display({
       id: "edit",
       header: () => <span className="text-ink">Edit</span>,
@@ -443,32 +509,26 @@ export default function UsersTable({
     columns,
     getRowId: (row) => row.user_id,
     enableRowSelection: true,
-
-    // CONTROLLED STATE
     state: { rowSelection, pagination, globalFilter, columnFilters, sorting },
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
-
-    // prevent implicit reset to page 0 on data change
     autoResetPageIndex: false,
-
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-
     globalFilterFn,
   })
 
-  // Reset to page 1 when filters/sort/global search change (explicit UX)
+  // reset to page 1 on filter/sort/search change
   useEffect(() => {
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }))
   }, [sorting, columnFilters, globalFilter])
 
-  // hydrate memberships for the current (filtered + sorted + paginated) page
+  // keep current page hydrated for freshness
   const lastMembershipKey = useRef<string>("")
   useEffect(() => {
     const ids = table.getRowModel().rows.map((r) => r.original.user_id)
@@ -479,7 +539,7 @@ export default function UsersTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, pagination.pageIndex, pagination.pageSize, sorting, columnFilters, globalFilter])
 
-  /* ---------------- actions (assign/template) ---------------- */
+  /* =============== actions (assign/template) =============== */
   const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.user_id)
 
   const extractDemographicAttrs = (g: GroupWithCount) => {
@@ -488,18 +548,18 @@ export default function UsersTable({
       ...(d["country"]
         ? { country: d["country"] }
         : d["region"]
-          ? { country: d["region"] }
-          : {}),
+        ? { country: d["region"] }
+        : {}),
       ...(d["job-function"]
         ? { "job-function": d["job-function"] }
         : d["job_function"]
-          ? { "job-function": d["job_function"] }
-          : {}),
+        ? { "job-function": d["job_function"] }
+        : {}),
       ...(d["job-area"]
         ? { "job-area": d["job-area"] }
         : d["job_area"]
-          ? { "job-area": d["job_area"] }
-          : {}),
+        ? { "job-area": d["job_area"] }
+        : {}),
     }
   }
 
@@ -519,7 +579,6 @@ export default function UsersTable({
     const g = groupById[targetGroupId]
     if (!g) return
 
-    // Build deltas: +N to target, -1 for each old group (when different)
     const deltas: Record<string, number> = { [targetGroupId]: userIds.length }
     const oldIds = new Set<string>()
     for (const u of rows) {
@@ -534,56 +593,51 @@ export default function UsersTable({
     setLoading(true)
     setError(null)
     try {
-      // 1) Patch Zephr attributes
       await Promise.all(
         userIds.map((uid) =>
           updateUserAttributesAction(uid, { group: g.name, ...demo }),
         ),
       )
 
-      // 2) Persist membership (use the dedicated write route)
-      const writePayload = {
-        // server will read active account from session; you can pass accountId if you want:
-        // accountId,
-        userIds,
-        groupId: targetGroupId,
-      }
+      const writePayload = { userIds, groupId: targetGroupId }
       const { res, data, raw } = await fetchJson("/api/membership/set", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(writePayload),
       })
-
       if (!res.ok || !data?.ok) {
         const msg = data?.error || raw || `Request failed (${res.status})`
         throw new Error(msg)
       }
 
-
-      // 3) Optimistic UI update
       setRows((prev) =>
         prev.map((u) =>
           userIds.includes(u.user_id)
             ? {
-              ...u,
-              group_id: g.id,
-              group_icon: g.icon,
-              group_name: g.name,
-              attributes: { ...u.attributes, group: g.name, ...demo },
-            }
+                ...u,
+                group_id: g.id,
+                group_icon: g.icon,
+                group_name: g.name,
+                attributes: { ...u.attributes, group: g.name, ...demo },
+              }
             : u,
         ),
       )
 
-      // 4) Counts
       const serverDeltas: Record<string, number> | undefined = data?.deltas
       applyCountDeltasLocal(
         serverDeltas && Object.keys(serverDeltas).length ? serverDeltas : deltas,
       )
 
-      // 5) Re-hydrate for current page
+      // keep the global cache in sync so filters remain correct
+      setMembershipByUser((prev) => {
+        const next = { ...prev }
+        for (const uid of userIds) next[uid] = { group_id: g.id, name: g.name, icon: g.icon ?? null }
+        return next
+      })
+
       const ids = table.getRowModel().rows.map((r) => r.original.user_id)
-      lastMembershipKey.current = "" // force run
+      lastMembershipKey.current = ""
       await refreshMemberships(ids)
 
       table.resetRowSelection()
@@ -599,11 +653,24 @@ export default function UsersTable({
     await assignToGroup(targetGroupId, selectedIds)
   }
 
+  const DEFAULT_MAP = useMemo(
+    () => Object.fromEntries(DEFAULT_TEMPLATES.map((t) => [t.name, t] as const)),
+    [],
+  )
+
   const fetchTemplate = async (name: string) => {
-    const hit = DEFAULT_TEMPLATES.find((t) => t.name === name)
-    if (hit) return hit
-    const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
-    return res.ok ? await res.json() : null
+    if (DEFAULT_MAP[name]) return DEFAULT_MAP[name]
+    const res = await fetch(`/api/templates/${encodeURIComponent(name)}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    })
+    if (!res.ok) return null
+    const data = await res.json().catch(() => null)
+    if (!data) return null
+    return {
+      name: String((data as any).name || name),
+      attributes: coerceBoolMap((data as any).attributes || {}),
+    }
   }
 
   async function applyTemplate(templateName: string) {
@@ -624,7 +691,7 @@ export default function UsersTable({
     }
   }
 
-  /* ---------------- drag & drop ---------------- */
+  /* drag & drop */
   const onDragStart = useCallback((e: DragEvent, userId: string) => {
     e.dataTransfer.setData("text/plain", userId)
     e.dataTransfer.effectAllowed = "move"
@@ -643,10 +710,9 @@ export default function UsersTable({
     [selectedIds], // eslint-disable-line react-hooks/exhaustive-deps
   )
 
-  /* ---------------- toolbar (filters) ---------------- */
+  /* UI */
   const ALL = "__ALL__"
 
-  /* ---------------- UI ---------------- */
   return (
     <>
       {error && (
@@ -679,17 +745,17 @@ export default function UsersTable({
           </Select>
 
           <Select onValueChange={applyTemplate} disabled={loading}>
-            <SelectTrigger className="h-8 w-52 rounded-none border border-line bg-paper text-ink">
+            <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
               <SelectValue placeholder="Apply Template…" />
             </SelectTrigger>
             <SelectContent className="max-h-60 overflow-y-auto rounded-none border border-line bg-paper">
-              {DEFAULT_TEMPLATES.map((t) => (
+              {templateNames.map((n) => (
                 <SelectItem
-                  key={t.name}
-                  value={t.name}
+                  key={n}
+                  value={n}
                   className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
                 >
-                  {t.name}
+                  {n}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -701,7 +767,7 @@ export default function UsersTable({
         </div>
       )}
 
-      {/* Toolbar: global search + column filters */}
+      {/* Toolbar: global search + group filter (only) */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
           <FilterIcon className="h-4 w-4 text-[hsl(var(--muted-foreground))]" />
@@ -724,54 +790,26 @@ export default function UsersTable({
           ) : null}
         </div>
 
-        {showFilters && (
-          <>
-            {/* Group filter */}
-            <Select
-              value={((table.getColumn("group")?.getFilterValue() as string) ?? ALL)}
-              onValueChange={(v) =>
-                table.getColumn("group")?.setFilterValue(v === ALL ? undefined : v)
-              }
-            >
-              <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
-                <SelectValue placeholder="Filter by group" />
-              </SelectTrigger>
-              <SelectContent className="max-h-64 overflow-y-auto rounded-none border border-line bg-paper">
-                <SelectItem value={ALL} className="rounded-none">
-                  All groups
-                </SelectItem>
-                {groups.map((g) => (
-                  <SelectItem key={g.id} value={g.id} className="rounded-none">
-                    {g.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Role filter */}
-            <Select
-              value={((table.getColumn("role")?.getFilterValue() as string) ?? ALL)}
-              onValueChange={(v) =>
-                table.getColumn("role")?.setFilterValue(v === ALL ? undefined : v)
-              }
-            >
-              <SelectTrigger className="h-8 w-44 rounded-none border border-line bg-paper text-ink">
-                <SelectValue placeholder="Filter by role" />
-              </SelectTrigger>
-              <SelectContent className="rounded-none border border-line bg-paper">
-                <SelectItem value={ALL} className="rounded-none">
-                  All
-                </SelectItem>
-                <SelectItem value="Owner" className="rounded-none">
-                  Owner
-                </SelectItem>
-                <SelectItem value="User" className="rounded-none">
-                  User
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </>
-        )}
+        <Select
+          value={((table.getColumn("group")?.getFilterValue() as string) ?? ALL)}
+          onValueChange={(v) =>
+            table.getColumn("group")?.setFilterValue(v === ALL ? undefined : v)
+          }
+        >
+          <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
+            <SelectValue placeholder="Filter by group" />
+          </SelectTrigger>
+          <SelectContent className="max-h-64 overflow-y-auto rounded-none border border-line bg-paper">
+            <SelectItem value={ALL} className="rounded-none">
+              All groups
+            </SelectItem>
+            {groups.map((g) => (
+              <SelectItem key={g.id} value={g.id} className="rounded-none">
+                {g.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         <Button
           size="sm"
@@ -901,9 +939,12 @@ export default function UsersTable({
             >
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-3">
-                  <span className="text-lg" aria-hidden="true">
-                    {GROUP_ICON_EMOJI[g.icon || ""] ?? "📁"}
-                  </span>
+                  <GroupIconInline
+                    icon={(g.icon ?? "folder") as string}
+                    color={g.color ?? undefined}
+                    title={g.name}
+                    className="h-5 w-5"
+                  />
                   <span
                     className="capitalize text-ink"
                     style={{ color: g.color ?? undefined }}

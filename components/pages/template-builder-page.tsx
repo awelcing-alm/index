@@ -1,3 +1,4 @@
+// components/pages/template-builder-page.tsx
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
@@ -9,14 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import {
-  FileText,
-  Save,
-  Trash2,
-  Copy,
-  Sparkles,
-  CheckCircle,
-} from "lucide-react"
+import { FileText, Save, Trash2, Copy, Sparkles, CheckCircle } from "lucide-react"
 import {
   NEWSLETTER_KEYS,
   ALL_NEWSLETTER_GROUPS,
@@ -35,30 +29,84 @@ interface Template {
   updatedAt?: string
 }
 
-/* -------------- util fetchers -------------- */
-const apiGetNames = async (): Promise<string[]> =>
-  (await fetch("/api/templates")).json()
+/* ---------------- helpers (API) ---------------- */
+
+// Names: only account-custom (avoid default duplicates in Manage tab)
+const apiGetNames = async (): Promise<string[]> => {
+  try {
+    const res = await fetch("/api/templates?scope=custom&format=array", {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    })
+    if (!res.ok) return []
+    const data = await res.json().catch(() => [])
+    return Array.isArray(data)
+      ? data.filter((v: unknown): v is string => typeof v === "string")
+      : []
+  } catch {
+    return []
+  }
+}
 
 const apiGetTpl = async (name: string): Promise<Template | null> => {
   try {
-    const res = await fetch(`/api/templates/${encodeURIComponent(name)}`)
+    const res = await fetch(`/api/templates/${encodeURIComponent(name)}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    })
     if (!res.ok) return null
-    return (await res.json()) as Template
+    const data = await res.json().catch(() => null)
+    if (!data || typeof data !== "object") return null
+
+    const attrsRaw = (data as any).attributes || {}
+    const attrs: Record<string, boolean> = {}
+    for (const [k, v] of Object.entries(attrsRaw)) {
+      if (typeof v === "boolean") attrs[k] = v
+      else if (v === "true" || v === "false") attrs[k] = v === "true"
+      else if (v != null) attrs[k] = Boolean(v)
+    }
+
+    return {
+      name: String((data as any).name ?? name),
+      description: String((data as any).description ?? ""),
+      attributes: attrs,
+      overwriteFalse: (data as any).overwriteFalse === true,
+      createdAt: String((data as any).createdAt ?? ""),
+      updatedAt: (data as any).updatedAt ? String((data as any).updatedAt) : undefined,
+    }
   } catch {
     return null
   }
 }
 
-const apiSaveTpl = (tpl: Template, exists: boolean) =>
-  fetch(`/api/templates${exists ? `/${encodeURIComponent(tpl.name)}` : ""}`, {
+const apiSaveTpl = async (tpl: Template, exists: boolean) => {
+  // Only send fields the API expects
+  const payload = {
+    name: tpl.name,
+    description: tpl.description ?? "",
+    attributes: tpl.attributes ?? {},
+    overwriteFalse: !!tpl.overwriteFalse,
+  }
+  const res = await fetch(`/api/templates${exists ? `/${encodeURIComponent(tpl.name)}` : ""}`, {
     method: exists ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(tpl),
+    body: JSON.stringify(payload),
   })
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "")
+    throw new Error(msg || `Save failed (${res.status})`)
+  }
+}
 
-const apiDeleteTpl = (name: string) =>
-  fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE" })
+const apiDeleteTpl = async (name: string) => {
+  const res = await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE" })
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "")
+    throw new Error(msg || `Delete failed (${res.status})`)
+  }
+}
 
+/* ---------------- component ---------------- */
 const emptyTpl = (): Template => ({
   name: "",
   description: "",
@@ -73,22 +121,41 @@ export default function TemplateBuilderPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [tab, setTab] = useState<"create" | "manage">("create")
   const [saved, setSaved] = useState<string>("")
-  const [query, setQuery] = useState("") // NEW: filter query
+  const [query, setQuery] = useState("") // filter query
+  const [err, setErr] = useState<string>("")
+
   const accId = getActiveAccountId()
 
   useEffect(() => {
     if (!accId) return
+    let cancelled = false
+
     ;(async () => {
+      setErr("")
       try {
         const names = await apiGetNames()
+        if (cancelled) return
+        if (!names.length) {
+          setTemplates([])
+          return
+        }
         const fetched = await Promise.all(names.map(apiGetTpl))
-        const customs = fetched.filter(Boolean) as Template[]
-        setTemplates(customs.sort((a, b) => a.name.localeCompare(b.name)))
-      } catch (err) {
-        console.error(err)
-        setTemplates([])
+        if (cancelled) return
+        const list = (fetched.filter(Boolean) as Template[]).sort((a, b) =>
+          a.name.localeCompare(b.name)
+        )
+        setTemplates(list)
+      } catch (e: any) {
+        if (!cancelled) {
+          setTemplates([])
+          setErr(e?.message || "Failed to load templates")
+        }
       }
     })()
+
+    return () => {
+      cancelled = true
+    }
   }, [accId])
 
   const buildAttributePayload = (): Record<string, boolean> => {
@@ -105,7 +172,11 @@ export default function TemplateBuilderPage() {
   }
 
   const saveCurrent = async () => {
-    if (!current.name.trim()) return alert("Template needs a name")
+    setErr("")
+    if (!current.name.trim()) {
+      setErr("Template needs a name")
+      return
+    }
 
     const now = new Date().toISOString()
     const exists = templates.some((t) => t.name === current.name)
@@ -117,21 +188,30 @@ export default function TemplateBuilderPage() {
       updatedAt: now,
     }
 
-    await apiSaveTpl(payload, exists)
-    setTemplates((prev) =>
-      [...prev.filter((t) => t.name !== payload.name), payload].sort((a, b) =>
-        a.name.localeCompare(b.name),
-      ),
-    )
-    setSaved(exists ? "Template updated" : "Template created")
-    setTimeout(() => setSaved(""), 3000)
-    reset()
-    setTab("manage")
+    try {
+      await apiSaveTpl(payload, exists)
+      setTemplates((prev) =>
+        [...prev.filter((t) => t.name !== payload.name), payload].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        )
+      )
+      setSaved(exists ? "Template updated" : "Template created")
+      setTimeout(() => setSaved(""), 3000)
+      reset()
+      setTab("manage")
+    } catch (e: any) {
+      setErr(e?.message || "Save failed")
+    }
   }
 
   const deleteTpl = async (name: string) => {
-    await apiDeleteTpl(name)
-    setTemplates((p) => p.filter((t) => t.name !== name))
+    setErr("")
+    try {
+      await apiDeleteTpl(name)
+      setTemplates((p) => p.filter((t) => t.name !== name))
+    } catch (e: any) {
+      setErr(e?.message || "Delete failed")
+    }
   }
 
   const reset = () => {
@@ -150,26 +230,22 @@ export default function TemplateBuilderPage() {
     return ALL_NEWSLETTER_GROUPS.map((g) => ({
       name: g.name,
       slugs: g.slugs.filter(
-        (slug) => slug.includes(q) || slug.replace(/-/g, " ").includes(q),
+        (slug) => slug.includes(q) || slug.replace(/-/g, " ").includes(q)
       ),
     })).filter((g) => g.slugs.length > 0)
   }, [query])
 
   const visibleSlugs = useMemo<NewsletterSlug[]>(
     () => groupsToRender.flatMap((g) => g.slugs) as NewsletterSlug[],
-    [groupsToRender],
+    [groupsToRender]
   )
 
   const setAllVisible = (value: boolean) => {
     if (visibleSlugs.length === 0) return
     setCurrent((prev) => {
-      const next = { ...prev }
       const patch: Record<string, boolean> = {}
-      visibleSlugs.forEach((slug) => {
-        patch[slug] = value
-      })
-      next.attributes = { ...next.attributes, ...patch }
-      return next
+      visibleSlugs.forEach((slug) => (patch[slug] = value))
+      return { ...prev, attributes: { ...prev.attributes, ...patch } }
     })
   }
 
@@ -187,6 +263,12 @@ export default function TemplateBuilderPage() {
         </CardHeader>
 
         <CardContent>
+          {err && (
+            <Alert className="mb-4 rounded-none border border-line bg-[hsl(var(--muted))]">
+              <AlertDescription className="text-ink">{err}</AlertDescription>
+            </Alert>
+          )}
+
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
             <TabsList className="grid grid-cols-2 rounded-none border-b border-line bg-transparent p-0">
               <TabsTrigger value="create" className="rounded-none">
@@ -296,10 +378,7 @@ export default function TemplateBuilderPage() {
                               onCheckedChange={(v) =>
                                 setCurrent((p) => ({
                                   ...p,
-                                  attributes: {
-                                    ...p.attributes,
-                                    [slug]: v === true,
-                                  },
+                                  attributes: { ...p.attributes, [slug]: v === true },
                                 }))
                               }
                               className="rounded-none"
@@ -368,8 +447,12 @@ export default function TemplateBuilderPage() {
                       </div>
 
                       <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                        Created: {new Date(tpl.createdAt).toLocaleDateString()}{" "}
-                        {tpl.updatedAt && `(Updated ${new Date(tpl.updatedAt).toLocaleDateString()})`}
+                        {tpl.createdAt
+                          ? `Created: ${new Date(tpl.createdAt).toLocaleDateString()}`
+                          : "Created: —"}
+                        {tpl.updatedAt
+                          ? ` (Updated ${new Date(tpl.updatedAt).toLocaleDateString()})`
+                          : ""}
                       </p>
 
                       <p
@@ -394,24 +477,24 @@ export default function TemplateBuilderPage() {
                         Edit
                       </Button>
 
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setCurrent({
-                              ...tpl,
-                              name: `${tpl.name}-copy`,
-                              createdAt: "",
-                              updatedAt: undefined,
-                            })
-                            setIsEditing(false)
-                            setTab("create")
-                          }}
-                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
-                          title="Duplicate template"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setCurrent({
+                            ...tpl,
+                            name: `${tpl.name}-copy`,
+                            createdAt: "",
+                            updatedAt: undefined,
+                          })
+                          setIsEditing(false)
+                          setTab("create")
+                        }}
+                        className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                        title="Duplicate template"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
 
                       <Button
                         size="sm"

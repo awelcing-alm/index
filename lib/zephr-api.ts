@@ -50,7 +50,7 @@ export interface ZephrUser {
   user_id: string
   identifiers: { email_address: string }
   attributes?: Record<string, any>
-  email_verified: boolean
+  email_verified?: boolean
   created_date?: string
   modified_date?: string
   account_id?: string
@@ -123,7 +123,6 @@ function signRequest(method: string, fullPath: string, body?: string) {
   const signature = hash.digest("hex")
 
   const authHeader = `ZEPHR-HMAC-SHA256 ${ZEPHR_ACCESS_KEY}:${timestamp}:${nonce}:${signature}`
-
   return { authHeader }
 }
 
@@ -181,14 +180,10 @@ export async function publicApiCall(path: string, options: RequestInit = {}) {
 }
 
 /* =============================================================================
-   Accounts: targeted fetch → paged scan (with caps) + memo TTL
+   Accounts: scan all pages (with TTL memo to reduce spam)
 ============================================================================= */
 
-const DEFAULT_RPP = 50
-const MAX_PAGES = Number(process.env.ACCOUNTS_MAX_PAGES ?? "8")
-const ZERO_HIT_BREAK_AFTER = Number(process.env.ACCOUNTS_ZERO_PAGE_STOP ?? "2")
 const ACCOUNTS_TTL_MS = Number(process.env.ACCOUNTS_TTL_MS ?? "60000")
-
 const _accountsMemo = new Map<string, { expiry: number; data: ZephrAccount[] }>()
 
 function memoGetAccounts(email: string) {
@@ -200,9 +195,11 @@ function memoSetAccounts(email: string, data: ZephrAccount[]) {
   _accountsMemo.set(email.toLowerCase(), { expiry: Date.now() + ACCOUNTS_TTL_MS, data })
 }
 
-
 export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccount[]> {
-  const rpp = 200; // bump if the API allows
+  const cached = memoGetAccounts(ownerEmail)
+  if (cached) return cached
+
+  const rpp = 200 // bump if the API allows
   const owned: ZephrAccount[] = []
   const want = ownerEmail.toLowerCase()
 
@@ -224,12 +221,12 @@ export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccou
       }
     }
 
-    // Collect matches on this page
+    // collect matches
     for (const a of results) {
       if (a?.email_address?.toLowerCase() === want) owned.push(a)
     }
 
-    // Work out total pages (if the API provides a total)
+    // compute total pages when possible
     if (totalPages == null && resp && typeof resp === "object" && "total" in resp) {
       const total = (resp as Partial<ZephrAccountsResponse> & { total?: number }).total
       if (typeof total === "number" && total > 0) {
@@ -237,20 +234,20 @@ export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccou
       }
     }
 
-    // Stop conditions
     const lastByTotal = totalPages != null && page >= totalPages
     const lastByShort = totalPages == null && results.length < rpp
     if (lastByTotal || lastByShort) break
 
     page += 1
-    if (page > 10000) break // hard safety guard
+    if (page > 10000) break // hard guard
   }
 
+  memoSetAccounts(ownerEmail, owned)
   return owned
 }
 
 /* =============================================================================
-   Auth helpers (cookies) — consolidated from auth-actions
+   Auth helpers (cookies)
 ============================================================================= */
 
 export async function loginUser(email: string, password: string): Promise<LoginResult> {
@@ -263,21 +260,19 @@ export async function loginUser(email: string, password: string): Promise<LoginR
       }),
     })
 
-    const loginData = await loginResponse.json().catch(() => ({}))
-
-    // Extract session cookie from Set-Cookie header if present
+    // Extract session cookie
     const setCookieHeader = loginResponse.headers.get("set-cookie") || ""
     const cookieMatch = setCookieHeader.match(/blaize_session=([^;]+)/)
     const sessionCookie = cookieMatch ? cookieMatch[1] : ""
 
-    // Fresh accounts (fixes “new owner not detected”)
+    // Fresh accounts (detects newly added owners)
     const accounts = await getAccountsByOwner(email)
     const isAdmin = accounts.length > 0
 
-    const cookieStore = await cookies()
+    const jar = await cookies()
 
     if (sessionCookie) {
-      cookieStore.set("zephr_session", sessionCookie, {
+      jar.set("zephr_session", sessionCookie, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
@@ -285,21 +280,21 @@ export async function loginUser(email: string, password: string): Promise<LoginR
       })
     }
 
-    cookieStore.set("user_email", email, {
+    jar.set("user_email", email, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 60 * 60 * 24 * 7,
     })
 
-    cookieStore.set("is_admin", String(isAdmin), {
+    jar.set("is_admin", String(isAdmin), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 60 * 60 * 24 * 7,
     })
 
-    cookieStore.set("user_accounts", JSON.stringify(accounts), {
+    jar.set("user_accounts", JSON.stringify(accounts), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
@@ -307,13 +302,16 @@ export async function loginUser(email: string, password: string): Promise<LoginR
     })
 
     if (accounts.length > 0) {
-      cookieStore.set("active_account_id", accounts[0].account_id, {
+      jar.set("active_account_id", accounts[0].account_id, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         maxAge: 60 * 60 * 24 * 7,
       })
     }
+
+    // drain body for good measure
+    await loginResponse.text().catch(() => "")
 
     return { success: true, isAdmin, userEmail: email, accounts }
   } catch (err: any) {
@@ -322,37 +320,36 @@ export async function loginUser(email: string, password: string): Promise<LoginR
 }
 
 export async function getCurrentUser() {
-  const cookieStore = await cookies()
-  const userEmail = cookieStore.get("user_email")?.value
-  const session = cookieStore.get("zephr_session")?.value
-  const activeAccountIdCookie = cookieStore.get("active_account_id")?.value
+  const jar = await cookies()
+  const userEmail = jar.get("user_email")?.value
+  const session = jar.get("zephr_session")?.value
+  const activeAccountIdCookie = jar.get("active_account_id")?.value
 
   if (!userEmail) return null
 
-  // get fresh accounts (memoized with TTL)
+  // Fresh accounts (memoized with TTL)
   const accounts = await getAccountsByOwner(userEmail)
   const isAdmin = accounts.length > 0
 
-  // choose active account (prefer cookie if still valid)
   const activeAccount =
     accounts.find((a) => a.account_id === activeAccountIdCookie) || accounts[0]
 
-  // best-effort: refresh cookies to keep them in sync
+  // best-effort cookie sync
   try {
-    cookieStore.set("is_admin", String(isAdmin), {
+    jar.set("is_admin", String(isAdmin), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 60 * 60 * 24 * 7,
     })
-    cookieStore.set("user_accounts", JSON.stringify(accounts), {
+    jar.set("user_accounts", JSON.stringify(accounts), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 60 * 60 * 24 * 7,
     })
     if (activeAccount && activeAccount.account_id !== activeAccountIdCookie) {
-      cookieStore.set("active_account_id", activeAccount.account_id, {
+      jar.set("active_account_id", activeAccount.account_id, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
@@ -372,8 +369,8 @@ export async function getCurrentUser() {
 }
 
 export async function switchAccount(accountId: string) {
-  const cookieStore = await cookies()
-  cookieStore.set("active_account_id", accountId, {
+  const jar = await cookies()
+  jar.set("active_account_id", accountId, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -382,12 +379,12 @@ export async function switchAccount(accountId: string) {
 }
 
 export async function logoutUser() {
-  const cookieStore = await cookies()
-  cookieStore.delete("zephr_session")
-  cookieStore.delete("user_email")
-  cookieStore.delete("is_admin")
-  cookieStore.delete("user_accounts")
-  cookieStore.delete("active_account_id")
+  const jar = await cookies()
+  jar.delete("zephr_session")
+  jar.delete("user_email")
+  jar.delete("is_admin")
+  jar.delete("user_accounts")
+  jar.delete("active_account_id")
   redirect("/login")
 }
 
@@ -443,7 +440,77 @@ export async function testPublicApi(email: string, password: string) {
 }
 
 /* =============================================================================
-   Users & Products by account (existing impls kept)
+   User helpers (normalize GET/PATCH)
+============================================================================= */
+
+function coerceBoolMap(obj: any): Record<string, any> {
+  if (!obj || typeof obj !== "object") return {}
+  const out: Record<string, any> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === "true") out[k] = true
+    else if (v === "false") out[k] = false
+    else out[k] = v
+  }
+  return out
+}
+
+function normalizeUser(raw: any): ZephrUser {
+  const u = raw?.data ?? raw ?? {}
+  const attrs = coerceBoolMap(u.attributes || {})
+  const email =
+    u.identifiers?.email_address ??
+    u.email_address ??
+    u.user_email ??
+    ""
+
+  return {
+    user_id: String(u.user_id || u.id || ""),
+    identifiers: { email_address: String(email || "") },
+    attributes: attrs,
+    email_verified:
+      typeof u.email_verified === "boolean" ? u.email_verified : true,
+    created_date: u.created_date ?? u.createdAt ?? undefined,
+    modified_date: u.modified_date ?? u.updatedAt ?? undefined,
+    account_id: u.account_id ?? undefined,
+    user_type: u.user_type ?? undefined,
+  }
+}
+
+export async function getUserDetails(userId: string): Promise<ZephrUser> {
+  if (!userId) throw new Error("userId is required")
+  const raw = await adminApiCall(`/v3/users/${encodeURIComponent(userId)}`, { method: "GET" })
+  const user = normalizeUser(raw)
+  if (!user.user_id) {
+    throw new Error(`Unexpected /v3/users/${userId} response shape`)
+  }
+  return user
+}
+
+export async function updateUserAttributes(
+  userId: string,
+  attributes: Record<string, any>
+): Promise<ZephrUser | null> {
+  if (!userId) throw new Error("userId is required")
+  if (!attributes || typeof attributes !== "object" || !Object.keys(attributes).length) {
+    throw new Error("No attributes provided for update")
+  }
+
+  const res = await adminApiCall(
+    `/v3/users/${encodeURIComponent(userId)}/attributes`,
+    { method: "PATCH", body: JSON.stringify(attributes) }
+  )
+
+  // 204 -> null (success with no content)
+  if (res == null) return null
+  try {
+    return normalizeUser(res)
+  } catch {
+    return null
+  }
+}
+
+/* =============================================================================
+   Users & Products by account
 ============================================================================= */
 
 export async function getUsersByAccount(accountId: string): Promise<ZephrUser[]> {
@@ -468,13 +535,13 @@ export async function getUsersByAccount(accountId: string): Promise<ZephrUser[]>
 }
 
 export async function getProductsByAccount(accountId: string): Promise<ZephrProductWithGrant[]> {
-  let grants: ZephrAccountGrant[] = []
+  let grants: any[] = []
   try {
     const resp = await adminApiCall(`/v3/accounts/${accountId}/grants`)
     if (Array.isArray(resp)) grants = resp
     else if (resp && typeof resp === "object") {
-      if (Array.isArray(resp.results)) grants = resp.results
-      else if (Array.isArray(resp.data)) grants = resp.data
+      if (Array.isArray((resp as any).results)) grants = (resp as any).results
+      else if (Array.isArray((resp as any).data)) grants = (resp as any).data
     }
   } catch (e) {
     console.error(`[getProductsByAccount] grants fetch failed for ${accountId}:`, e)
@@ -483,21 +550,31 @@ export async function getProductsByAccount(accountId: string): Promise<ZephrProd
 
   const out: ZephrProductWithGrant[] = []
   for (const g of grants) {
-    if (!g.grantId || (!g.product_id && !g.entitlement_id) || !g.entitlement_type) continue
+    // tolerate snake_case and camelCase
+    const grantId         = g.grant_id        ?? g.grantId
+    const productId       = g.product_id      ?? g.productId
+    const entitlementId   = g.entitlement_id  ?? g.entitlementId
+    const entitlementType = g.entitlement_type?? g.entitlementType
+    const startTime       = g.start_time      ?? g.startTime ?? "N/A"
+    const endTime         = g.end_time        ?? g.endTime   ?? "N/A"
+    const expiryState     = g.expiry_state    ?? g.expiryState ?? "unknown"
+
+    if (!grantId || (!productId && !entitlementId) || !entitlementType) continue
+
     out.push({
       tenantId: accountId,
-      id: g.product_id || g.entitlement_id,
-      label: g.product_id ? `Product: ${g.product_id}` : `Entitlement: ${g.entitlement_id}`,
-      description: `${g.entitlement_type} - Grant ID: ${g.grantId}`,
+      id: productId || entitlementId || grantId,
+      label: productId ? `Product: ${productId}` : `Entitlement: ${entitlementId}`,
+      description: `${entitlementType} - Grant ID: ${grantId}`,
       entitlement: {
-        id: g.entitlement_id || "unknown",
-        type: g.entitlement_type,
+        id: entitlementId || "unknown",
+        type: entitlementType,
         entitlementTenant: accountId,
       },
-      grantId: g.grantId,
-      startTime: g.startTime || "N/A",
-      endTime: g.endTime || "N/A",
-      expiry_state: g.expiry_state || "unknown",
+      grantId,
+      startTime,
+      endTime,
+      expiry_state: String(expiryState).toLowerCase(),
     })
   }
   return out

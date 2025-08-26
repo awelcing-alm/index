@@ -82,8 +82,26 @@ function normalizeOptOutInput(v: unknown): string {
 /* ---------------- template helpers ---------------- */
 const DEFAULT_MAP = Object.fromEntries(DEFAULT_TEMPLATES.map((t) => [t.name, t]))
 
-const fetchCustomTemplateNames = async (): Promise<string[]> =>
-  (await fetch("/api/templates")).json()
+// Robustly parse /api/templates which returns { ok, names } (or sometimes { data } / array)
+const fetchCustomTemplateNames = async (): Promise<string[]> => {
+  try {
+    const res = await fetch("/api/templates", { cache: "no-store" })
+    if (!res.ok) return []
+    const payload = await res.json().catch(() => null)
+
+    const arr = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.names)
+      ? payload.names
+      : Array.isArray(payload?.data)
+      ? payload.data
+      : []
+
+    return arr.map(String).filter(Boolean)
+  } catch {
+    return []
+  }
+}
 
 const fetchTemplate = async (name: string) => {
   if (DEFAULT_MAP[name]) return DEFAULT_MAP[name]
@@ -184,7 +202,10 @@ export function UserEditModal({
       try {
         const custom = await fetchCustomTemplateNames()
         const defaults = DEFAULT_TEMPLATES.map((t) => t.name)
-        const merged = [...defaults, ...custom.filter((n) => !defaults.includes(n))]
+        // Merge safely; avoid duplicates; keep simple alpha sort
+        const merged = Array.from(new Set([...defaults, ...custom])).sort((a, b) =>
+          a.localeCompare(b),
+        )
         setTplNames(merged)
         setTplErr(null)
       } catch (e) {

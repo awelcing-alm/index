@@ -5,13 +5,90 @@ import { useEffect, useMemo, useState } from "react"
 import type { Group } from "@/lib/groups"
 import { getActiveAccountId } from "@/lib/account-store"
 
-/* --------------------------- constants & helpers --------------------------- */
+/* ------------------------------ Lucide icons ------------------------------ */
+import {
+  Scale,
+  Landmark,
+  ClipboardList,
+  Shield,
+  User as UserIcon,
+  Users as UsersIcon,
+  Briefcase,
+  FileText,
+  BarChart3,
+  PieChart,
+  Gavel,
+  Building2,
+  Folder,
+  BookOpen,
+  Globe,
+  GraduationCap,
+  Newspaper,
+  Mail,
+  Users,
+} from "lucide-react"
 
-const GROUP_ICON_EMOJI: Record<string, string> = {
-  scale: "⚖️", bank: "🏛️", clipboard: "📋", shield: "🛡️", user: "👤", users: "👥",
-  briefcase: "💼", file: "📄", chart: "📈", pie: "📊", gavel: "🔨", building: "🏢",
-  folder: "🗂️", book: "📘",
+/** Curated list of icon ids you’ll allow in the UI */
+export const ICON_OPTIONS = [
+  { id: "folder", label: "Folder", Icon: Folder },
+  { id: "users", label: "Users", Icon: Users as any },
+  { id: "user", label: "User", Icon: UserIcon },
+  { id: "scale", label: "Scale", Icon: Scale },
+  { id: "landmark", label: "Landmark", Icon: Landmark },
+  { id: "clipboard", label: "Clipboard", Icon: ClipboardList },
+  { id: "shield", label: "Shield", Icon: Shield },
+  { id: "briefcase", label: "Briefcase", Icon: Briefcase },
+  { id: "file", label: "File", Icon: FileText },
+  { id: "barchart", label: "Bar Chart", Icon: BarChart3 },
+  { id: "pie", label: "Pie Chart", Icon: PieChart },
+  { id: "gavel", label: "Gavel", Icon: Gavel },
+  { id: "building", label: "Building", Icon: Building2 },
+  { id: "book", label: "Book", Icon: BookOpen },
+  { id: "globe", label: "Globe", Icon: Globe },
+  { id: "gradcap", label: "Graduation Cap", Icon: GraduationCap },
+  { id: "newspaper", label: "Newspaper", Icon: Newspaper },
+  { id: "mail", label: "Mail", Icon: Mail },
+] as const
+
+type IconId = (typeof ICON_OPTIONS)[number]["id"]
+
+/** Direct lookup map so we can render quickly by key */
+const LUCIDE_ICON_MAP: Record<IconId, React.ComponentType<any>> = ICON_OPTIONS
+  .reduce((acc, it) => ((acc[it.id] = it.Icon), acc), {} as Record<IconId, React.ComponentType<any>>)
+
+/** Back-compat: map old emoji keys → new lucide ids */
+const OLD_TO_NEW: Record<string, IconId> = {
+  // your old stored keys on groups:
+  scale: "scale",
+  bank: "landmark",
+  clipboard: "clipboard",
+  shield: "shield",
+  user: "user",
+  users: "users",
+  briefcase: "briefcase",
+  file: "file",
+  chart: "barchart",
+  pie: "pie",
+  gavel: "gavel",
+  building: "building",
+  folder: "folder",
+  book: "book",
 }
+
+/** Normalize whatever we stored previously to a Lucide id */
+export function normalizeIconKey(raw?: string | null): IconId {
+  if (!raw) return "folder"
+  const lower = String(raw).toLowerCase().trim()
+  if (lower in LUCIDE_ICON_MAP) return lower as IconId
+  if (lower in OLD_TO_NEW) return OLD_TO_NEW[lower]
+  // Try a few loose matches
+  if (lower.includes("chart")) return "barchart"
+  if (lower.includes("pie")) return "pie"
+  if (lower.includes("landmark") || lower.includes("bank")) return "landmark"
+  return "folder"
+}
+
+/* -------------------------- membership fetch/cache ------------------------- */
 
 type Membership = { group_id: string; name: string | null; icon: string | null }
 type MembershipMap = Record<string, Membership>
@@ -57,8 +134,6 @@ async function fetchBatch(ids: string[], accountId?: string | null, signal?: Abo
   if (accountId) search.set("account", accountId)
 
   const res = await fetch(`/api/groups/membership?${search.toString()}`, {
-    // IMPORTANT: allow browser/CDN caching & ETags to work
-    // (no `cache: "no-store"`)
     method: "GET",
     headers: { Accept: "application/json" },
     redirect: "follow",
@@ -75,15 +150,12 @@ async function fetchBatch(ids: string[], accountId?: string | null, signal?: Abo
 
 async function getMemberships(ids: string[], accountId?: string | null, signal?: AbortSignal): Promise<MembershipMap> {
   const k = keyFor(ids, accountId)
-  // fresh memory cache?
   const cached = memoryCache.get(k)
   if (cached && cached.expiry > now()) return cached.data
 
-  // existing in-flight?
   const running = inflight.get(k)
   if (running) return running
 
-  // plan network: chunk if over per-call limit
   const chunks = chunk(canonicalize(ids), MAX_IDS_PER_CALL)
   const promise = (async () => {
     const out: MembershipMap = {}
@@ -119,7 +191,6 @@ export function useMembershipMap(userIds: string[]) {
       return
     }
 
-    // serve from memory immediately if present
     const cached = memoryCache.get(memoKey)
     if (cached && cached.expiry > now()) {
       setData(cached.data)
@@ -161,6 +232,33 @@ export function useMembershipMap(userIds: string[]) {
 
 /* ------------------------------ presentation ------------------------------ */
 
+/** Generic inline group icon (use anywhere) */
+export function GroupIconInline({
+  icon,
+  color,
+  title,
+  className = "h-5 w-5",
+  "aria-label": ariaLabel,
+}: {
+  icon?: string | null
+  color?: string | null
+  title?: string | null
+  className?: string
+  "aria-label"?: string
+}) {
+  const key = normalizeIconKey(icon)
+  const IconComp = LUCIDE_ICON_MAP[key] ?? Folder
+  return (
+    <IconComp
+      className={className}
+      style={{ color: color || undefined }}
+      aria-label={ariaLabel ?? title ?? "Group"}
+      title={title ?? undefined}
+    />
+  )
+}
+
+/** Existing user-row icon renderer, now Lucide + colored */
 export function GroupIconForUser({
   userId,
   groupsById,
@@ -181,18 +279,57 @@ export function GroupIconForUser({
   const groupId = m?.group_id ?? fallbackGroupId ?? null
   const g = groupId ? groupsById[groupId] : undefined
 
-  const iconKey = (m?.icon ?? g?.icon ?? fallbackIcon ?? "") as string
+  const iconKey = normalizeIconKey(m?.icon ?? g?.icon ?? fallbackIcon ?? "folder")
   const title = (m?.name ?? g?.name ?? fallbackName ?? "Group") as string
+  const color = g?.color || undefined
 
-  if (!groupId && !iconKey) {
-    return <span className="text-[hsl(var(--muted-foreground))]">—</span>
-  }
+  const IconComp = LUCIDE_ICON_MAP[iconKey] ?? Folder
 
-  const emoji = GROUP_ICON_EMOJI[iconKey] ?? "📁"
-
+  // Lucide icons inherit text color via currentColor
   return (
-    <span className="text-lg leading-none" title={title} aria-label={title}>
-      {emoji}
-    </span>
+    <IconComp
+      className="h-5 w-5"
+      style={{ color }}
+      title={title}
+      aria-label={title}
+    />
+  )
+}
+
+/* ----------------------------- Icon picker UI ----------------------------- */
+
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+
+export function GroupIconPicker({
+  value,
+  onChange,
+  color,
+  className,
+}: {
+  value?: string | null
+  onChange: (next: IconId) => void
+  color?: string | null
+  className?: string
+}) {
+  const current = normalizeIconKey(value)
+  return (
+    <Select value={current} onValueChange={(v) => onChange(normalizeIconKey(v))}>
+      <SelectTrigger className={className ?? "h-9 w-56 rounded-none border border-line bg-paper text-ink"}>
+        <div className="flex items-center gap-2">
+          <GroupIconInline icon={current} color={color ?? undefined} />
+          <SelectValue />
+        </div>
+      </SelectTrigger>
+      <SelectContent className="max-h-80 overflow-y-auto rounded-none border border-line bg-paper">
+        {ICON_OPTIONS.map(({ id, label, Icon }) => (
+          <SelectItem key={id} value={id} className="rounded-none">
+            <div className="flex items-center gap-2">
+              <Icon className="h-4 w-4" style={{ color: color || undefined }} />
+              <span>{label}</span>
+            </div>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

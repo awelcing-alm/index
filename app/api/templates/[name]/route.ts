@@ -30,7 +30,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ name: string }>
     const { name } = await (ctx as any).params
     const tplName = decodeURIComponent(name)
 
-    const jar = await cookies()
+    const jar = cookies()
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ error: "No account" }, { status: 401 })
 
@@ -89,7 +89,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ name: string }>
   try {
     const { name } = await (ctx as any).params
     const tplName = decodeURIComponent(name)
-    const jar = await cookies()
+    const jar = cookies()
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ ok: false, error: "No account" }, { status: 401 })
 
@@ -121,7 +121,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ name: string
   try {
     const { name } = await (ctx as any).params
     const tplName = decodeURIComponent(name)
-    const jar = await cookies()
+    const jar = cookies()
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ ok: false, error: "No account" }, { status: 401 })
 

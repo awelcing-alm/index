@@ -1,7 +1,7 @@
 // components/pages/bulk-ops-page.tsx
 "use client"
 
-import { useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -9,13 +9,15 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Layers, Upload, Users, CheckCircle, XCircle, AlertTriangle, Info } from "lucide-react"
+import { Layers, Upload, Users, CheckCircle, XCircle, AlertTriangle, Info, Square } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { ZephrAccount } from "@/lib/zephr-types"
 
+type BulkUserStatus = "success" | "error" | "skipped"
+
 interface BulkUserResult {
   email: string
-  status: "success" | "error" | "skipped"
+  status: BulkUserStatus
   message: string
   userId?: string
 }
@@ -32,6 +34,7 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
   const [results, setResults] = useState<BulkUserResult[]>([])
   const [progress, setProgress] = useState(0)
   const [verifyFlag, setVerifyFlag] = useState(false)
+  const abortRef = useRef(false)
 
   const parseEmails = (input: string): string[] => {
     return [
@@ -44,8 +47,59 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
     ]
   }
 
+  const previewEmails = useMemo(() => parseEmails(csvInput), [csvInput])
+
+  // ---- helpers: backoff + per-email call
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  async function withRetry<T>(fn: () => Promise<T>, opts?: { retries?: number; base?: number }) {
+    const retries = opts?.retries ?? 2
+    const base = opts?.base ?? 400
+    let attempt = 0
+    // try (retries+1) times total
+    for (;;) {
+      try {
+        return await fn()
+      } catch (err: any) {
+        if (attempt >= retries) throw err
+        // jittered backoff
+        const delay = base * Math.pow(2, attempt) + Math.random() * 200
+        await sleep(delay)
+        attempt++
+      }
+    }
+  }
+
+  async function createOne(email: string): Promise<BulkUserResult> {
+    try {
+      const res = await fetch("/api/bulk-users/one", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, accountId, emailVerified: verifyFlag }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        // API returns shape {status,message,userId?} on non-2xx too
+        return {
+          email,
+          status: (json?.status as BulkUserStatus) || "error",
+          message: json?.message || `HTTP ${res.status}`,
+          userId: json?.userId,
+        }
+      }
+      return {
+        email,
+        status: (json?.status as BulkUserStatus) || "success",
+        message: json?.message || "Created",
+        userId: json?.userId,
+      }
+    } catch (e: any) {
+      return { email, status: "error", message: e?.message ?? "Network error" }
+    }
+  }
+
   const handleBulkAdd = async () => {
-    const emails = parseEmails(csvInput)
+    const emails = previewEmails
     if (!accountId) {
       alert("No account selected – please choose an account first.")
       return
@@ -54,42 +108,63 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
       alert("Please enter valid email addresses")
       return
     }
-    if (emails.length > 100) {
-      alert("Maximum 100 emails allowed per batch")
+    if (emails.length > 500) {
+      // raise or lower as you prefer — the queue will throttle either way
+      alert("Maximum 500 emails allowed per batch")
       return
     }
 
     setIsProcessing(true)
+    abortRef.current = false
     setProgress(0)
     setResults([])
 
-    try {
-      const res = await fetch("/api/bulk-users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emails, accountId, emailVerified: verifyFlag }),
-      })
+    const total = emails.length
+    let completed = 0
+    let nextIndex = 0
 
-      if (!res.ok) throw new Error(await res.text())
-      const json = (await res.json()) as { results: BulkUserResult[] }
-      setResults(json.results)
-      setProgress(100)
+    const CONCURRENCY = Math.min(8, total) // tweak: 4–8 is usually sweet-spot
+
+    const pushResult = (r: BulkUserResult) => {
+      setResults((prev) => [r, ...prev]) // newest first
+    }
+
+    async function worker() {
+      while (!abortRef.current) {
+        const idx = nextIndex++
+        if (idx >= total) break
+        const email = emails[idx]
+
+        const result = await withRetry(() => createOne(email), { retries: 2, base: 500 })
+        pushResult(result)
+
+        completed++
+        setProgress((completed / total) * 100)
+      }
+    }
+
+    try {
+      await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()))
     } catch (err) {
-      console.error(err)
-      alert("Bulk operation failed. Please check the console for details.")
+      console.error("Bulk queue aborted/failed:", err)
+      // we still show partial results; no need to throw
     } finally {
       setIsProcessing(false)
+      if (completed === total) setProgress(100)
     }
   }
 
-  const previewEmails = parseEmails(csvInput)
+  const cancelProcessing = () => {
+    abortRef.current = true
+  }
+
   const successCount = results.filter((r) => r.status === "success").length
   const errorCount = results.filter((r) => r.status === "error").length
   const skippedCount = results.filter((r) => r.status === "skipped").length
 
   return (
     <div className="space-y-6">
-      {/* ============================ INPUT CARD ============================ */}
+      {/* INPUT CARD (unchanged UI except buttons/progress bits below) */}
       <Card className="rounded-none border border-line bg-paper">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 font-serif text-2xl text-ink">
@@ -105,7 +180,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
         </CardHeader>
         <CardContent>
           <div className="space-y-6">
-            {/* info alert */}
             <Alert className="rounded-none border border-line bg-[hsl(var(--secondary))]/20">
               <Info className="h-4 w-4 text-ink" aria-hidden="true" />
               <AlertDescription className="text-ink">
@@ -117,7 +191,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
               </AlertDescription>
             </Alert>
 
-            {/* textarea */}
             <div>
               <Label htmlFor="csvInput" className="text-ink">Email Addresses</Label>
               <Textarea
@@ -135,7 +208,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
               />
             </div>
 
-            {/* email verified toggle */}
             <div className="flex items-center gap-2">
               <Checkbox
                 id="emailVerified"
@@ -147,7 +219,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
               <Label htmlFor="emailVerified" className="text-ink">Mark emails as verified</Label>
             </div>
 
-            {/* preview chips */}
             {previewEmails.length > 0 && (
               <div>
                 <Label className="text-ink">
@@ -170,7 +241,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
               </div>
             )}
 
-            {/* progress */}
             {isProcessing && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -183,7 +253,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
               </div>
             )}
 
-            {/* actions */}
             <div className="flex gap-3">
               <Button
                 onClick={handleBulkAdd}
@@ -194,7 +263,17 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
                 {isProcessing ? "Processing…" : `Add ${previewEmails.length} Users`}
               </Button>
 
-              {!isProcessing && (
+              {isProcessing ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={cancelProcessing}
+                  className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
+                >
+                  <Square className="mr-2 h-4 w-4" />
+                  Cancel
+                </Button>
+              ) : (
                 <Button
                   variant="outline"
                   className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
@@ -213,7 +292,6 @@ export function BulkOpsPage({ activeAccount }: BulkOpsPageProps) {
         </CardContent>
       </Card>
 
-      {/* ============================ RESULTS CARD ============================ */}
       {results.length > 0 && (
         <Card className="rounded-none border border-line bg-paper">
           <CardHeader>

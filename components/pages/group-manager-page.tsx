@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { getActiveAccountId } from "@/lib/account-store"
+import { GroupIconInline, normalizeIconKey } from "@/components/group-icon"
 
 type Group = {
   account_id: string
@@ -19,19 +20,80 @@ type Group = {
 
 type ProductOption = { id: string; label: string; grantId?: string }
 
-const ICONS = [
-  "scale", "bank", "clipboard", "shield", "user", "users", "briefcase",
-  "file", "chart", "pie", "gavel", "building", "folder", "book"
-] as const
+/** Curated icon keys (still using the *new* icon renderer). */
+const ICON_CHOICES: string[] = [
+  "scale",
+  "bank",
+  "clipboard",
+  "shield",
+  "user",
+  "users",
+  "briefcase",
+  "file",
+  "chart",
+  "pie",
+  "gavel",
+  "building",
+  "folder",
+  "book",
+]
 
-const ICON_EMOJI: Record<string, string> = {
-  scale: "⚖️", bank: "🏛️", clipboard: "📋", shield: "🛡️", user: "👤", users: "👥",
-  briefcase: "💼", file: "📄", chart: "📈", pie: "📊", gavel: "🔨", building: "🏢",
-  folder: "🗂️", book: "📘",
-}
-
+// util
 function slugify(s: string) {
   return s.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+}
+
+/** Grid-style icon selector to match the old layout */
+function IconGrid({
+  value,
+  onChange,
+  color,
+}: {
+  value: string
+  onChange: (next: string) => void
+  color?: string | null
+}) {
+  return (
+    <div className="rounded-md border p-3 bg-[hsl(var(--muted))]/10">
+      <div className="mb-2 flex items-center gap-2 text-sm">
+        <span className="select-none">Current:</span>
+        <GroupIconInline
+          icon={value}
+          color={color ?? undefined}
+          className="h-5 w-5"
+          title="Current icon"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+        {ICON_CHOICES.map((key) => {
+          const selected = value === key
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onChange(key)}
+              aria-pressed={selected}
+              className={[
+                "flex h-14 items-center justify-center rounded-md border transition-colors",
+                "bg-white/50 hover:bg-[hsl(var(--muted))]/30",
+                selected
+                  ? "ring-2 ring-offset-2 ring-blue-500 border-blue-500"
+                  : "border-[hsl(var(--border))]",
+              ].join(" ")}
+              title={key}
+            >
+              <GroupIconInline
+                icon={key}
+                color={color ?? undefined}
+                className="h-6 w-6"
+              />
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export default function GroupManagerPage() {
@@ -45,7 +107,7 @@ export default function GroupManagerPage() {
   // form
   const [name, setName] = useState("")
   const [color, setColor] = useState("#0F172A")
-  const [icon, setIcon] = useState<string>("scale")
+  const [icon, setIcon] = useState<string>("folder")
   const [newsletterTemplate, setNewsletterTemplate] = useState<string>("")
 
   const [products, setProducts] = useState<ProductOption[]>([])
@@ -112,15 +174,20 @@ export default function GroupManagerPage() {
     return () => { alive = false }
   }, [])
 
-  // template names
+  // template names (supports both old `{ ok, names }` and new array shapes)
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const res = await fetch("/api/templates", { cache: "no-store" })
+        // Ask for array if your API supports it; otherwise we parse flexibly below.
+        const res = await fetch("/api/templates?scope=all&format=array", { cache: "no-store" })
         if (!res.ok) throw new Error(`GET /api/templates ${res.status}`)
-        const names = await res.json()
-        const list = (Array.isArray(names) ? names : Array.isArray(names?.data) ? names.data : []) as string[]
+        const payload = await res.json()
+        const list: string[] =
+          Array.isArray(payload) ? payload :
+          Array.isArray(payload?.names) ? payload.names :
+          Array.isArray(payload?.data) ? payload.data : []
+
         if (alive) setTemplates(list.filter(Boolean).sort())
       } catch {
         if (alive) setTemplates([])
@@ -185,12 +252,11 @@ export default function GroupManagerPage() {
       return
     }
 
-    // IMPORTANT: use Zephr slugs
     const payload = {
       name: name.trim(),
       slug: slugify(name),
       color: color || null,
-      icon: icon || null,
+      icon: normalizeIconKey(icon),
       default_template: newsletterTemplate || null,
       product_grant_ids: selectedGrantIds,
       demographics: {
@@ -213,7 +279,7 @@ export default function GroupManagerPage() {
     if (!res.ok) { setError(await res.text()); return }
 
     await fetchGroups()
-    setName(""); setColor("#0F172A"); setIcon("scale"); setNewsletterTemplate("")
+    setName(""); setColor("#0F172A"); setIcon("folder"); setNewsletterTemplate("")
     setSelectedGrantIds([]); setCountry(""); setJobFunction(""); setJobArea("")
   }
 
@@ -336,33 +402,14 @@ export default function GroupManagerPage() {
             </div>
           </div>
 
-          {/* Icon selector */}
+          {/* Icon selector (grid layout) */}
           <div>
             <label className="block text-sm font-medium mb-2">Group Icon</label>
-            <details className="rounded-md border p-3">
-              <summary className="cursor-pointer select-none text-sm">
-                Current: <span className="ml-1">{ICON_EMOJI[icon] ?? "🔹"}</span>
-              </summary>
-              <div className="mt-3 grid grid-cols-7 gap-2">
-                {ICONS.map((key) => {
-                  const isSelected = icon === key
-                  return (
-                    <button
-                      type="button"
-                      key={key}
-                      onClick={() => setIcon(key)}
-                      className={[
-                        "h-12 rounded-md border flex items-center justify-center",
-                        isSelected ? "ring-2 ring-offset-2 ring-blue-500" : ""
-                      ].join(" ")}
-                      title={key}
-                    >
-                      <span className="text-xl leading-none">{ICON_EMOJI[key] ?? "🔹"}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </details>
+            <IconGrid
+              value={icon}
+              onChange={(next) => setIcon(next)}
+              color={color}
+            />
           </div>
 
           {/* Demographics */}
@@ -397,7 +444,7 @@ export default function GroupManagerPage() {
             <button
               type="reset"
               onClick={() => {
-                setName(""); setColor("#0F172A"); setIcon("scale"); setNewsletterTemplate("")
+                setName(""); setColor("#0F172A"); setIcon("folder"); setNewsletterTemplate("")
                 setSelectedGrantIds([]); setCountry(""); setJobFunction(""); setJobArea("")
                 setError(null)
               }}
@@ -422,7 +469,7 @@ export default function GroupManagerPage() {
             {groups.map((g) => (
               <li key={g.slug} className="flex items-center justify-between p-3">
                 <div className="flex items-center gap-3">
-                  <span className="text-xl">{ICON_EMOJI[String(g.icon) || ""] ?? "🔹"}</span>
+                  <GroupIconInline icon={g.icon} color={g.color ?? undefined} title={g.name} className="h-5 w-5" />
                   <div>
                     <div className="font-medium">{g.name}</div>
                     <div className="text-xs text-muted-foreground">slug: {g.slug}</div>

@@ -1,4 +1,4 @@
-import { getCurrentUser, logoutUser } from "@/lib/auth-actions";
+import { getCurrentUser, logoutUser } from "@/lib/zephr-api";
 import { Button } from "@/components/ui/button";
 import { LogOut, Shield, Building } from "lucide-react";
 import { AccountSwitcher } from "@/components/account-switcher";

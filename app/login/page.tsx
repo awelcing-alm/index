@@ -1,5 +1,5 @@
 import { LoginForm } from "@/components/login-form"
-import { getCurrentUser } from "@/lib/auth-actions"
+import { getCurrentUser } from "@/lib/zephr-api"
 import { redirect } from "next/navigation"
 
 export default async function LoginPage() {

@@ -16,7 +16,7 @@ import {
   getCurrentUser,
   getUsersForCurrentAccount,
   getProductsForCurrentAccount,
-} from "@/lib/auth-actions";
+} from "@/lib/zephr-api";
 
 import { listTplsWithMeta, loadTpl } from "@/lib/blob";
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults";

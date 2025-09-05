@@ -1,6 +1,6 @@
 // app/api/groups/membership/route.ts
 import { NextResponse, type NextRequest } from "next/server"
-import { getCurrentUser } from "@/lib/auth-actions"
+import { getCurrentUser } from "@/lib/zephr-api"
 import { sql } from "@/lib/db"
 import crypto from "crypto"
 

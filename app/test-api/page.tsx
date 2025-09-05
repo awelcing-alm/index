@@ -1,4 +1,4 @@
-import { testApiCredentials } from "@/lib/auth-actions"
+import { testApiCredentials } from "@/lib/zephr-api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 

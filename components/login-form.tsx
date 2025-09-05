@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Mail, Lock } from "lucide-react"
-import { loginUser } from "@/lib/auth-actions"
+import { loginUser } from "@/lib/zephr-api"
 
 export function LoginForm() {
   const [email, setEmail] = useState("")

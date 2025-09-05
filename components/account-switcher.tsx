@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { switchAccount } from "@/lib/auth-actions";
+import { switchAccount } from "@/lib/zephr-api";
 import { setActiveAccount } from "@/lib/account-store";
 import type { ZephrAccount } from "@/lib/zephr-types";
 

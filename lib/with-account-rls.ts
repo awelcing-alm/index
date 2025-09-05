@@ -1,6 +1,6 @@
 // lib/with-account-rls.ts
 import { withRlsTx } from "@/lib/db-rls"
-import { getCurrentUser } from "@/lib/auth-actions"
+import { getCurrentUser } from "@/lib/zephr-api"
 import type { sql as SqlType } from "@/lib/db"
 
 // Pass the transaction-bound query client (`q`) to your queries.

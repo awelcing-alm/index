@@ -1,6 +1,6 @@
 // app/api/membership/set/route.ts
 import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/auth-actions"
+import { getCurrentUser } from "@/lib/zephr-api"
 import { setMembershipBulk } from "@/lib/membership"
 
 type Body = {

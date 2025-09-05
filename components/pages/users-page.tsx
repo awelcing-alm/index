@@ -1,8 +1,10 @@
 // components/pages/users-page.tsx
 import { Suspense } from "react"
 
+/* ---------- server helpers ---------- */
+import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/zephr-api"
+
 /* actions */
-import { getCurrentUser, getUsersForCurrentAccount } from "@/lib/auth-actions"
 import { listGroups } from "@/lib/groups"
 
 /* ui */

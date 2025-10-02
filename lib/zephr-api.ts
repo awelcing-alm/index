@@ -5,6 +5,11 @@ import "server-only"
 import crypto from "crypto"
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
+import { logServer } from "@/lib/logger"
+// NOTE: next provides a helper to detect redirect exceptions
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { isRedirectError } from "next/dist/client/components/redirect"
 
 /* =============================================================================
    ENV
@@ -16,6 +21,7 @@ const ZEPHR_PUBLIC_BASE_URL =
   process.env.ZEPHR_PUBLIC_BASE_URL || "alm-lawcom-live.non-prod.cdn.zephr.com"
 const ZEPHR_ACCESS_KEY = process.env.ZEPHR_ACCESS_KEY!
 const ZEPHR_SECRET_KEY = process.env.ZEPHR_SECRET_KEY!
+const HAS_ADMIN_KEYS = !!(process.env.ZEPHR_ACCESS_KEY && process.env.ZEPHR_SECRET_KEY)
 
 /* =============================================================================
    Types (lightweight)
@@ -145,38 +151,50 @@ export async function adminApiCall(path: string, options: RequestInit = {}) {
     fetchOptions.body = rawBody
   }
 
-  const res = await fetch(`${ZEPHR_BASE_URL}${path}`, fetchOptions)
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(
-      `Admin API ${method} ${path} failed: ${res.status} ${res.statusText} - ${text}`,
-    )
-  }
-
-  if (res.status === 204) return null
-  const text = await res.text()
-  if (!text) return null
   try {
-    return JSON.parse(text)
-  } catch {
-    return text
+    const res = await fetch(`${ZEPHR_BASE_URL}${path}`, fetchOptions)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      logServer("adminApiCall_error", { method, path, status: res.status, text })
+      throw new Error(
+        `Admin API ${method} ${path} failed: ${res.status} ${res.statusText} - ${text}`,
+      )
+    }
+
+    if (res.status === 204) return null
+    const text = await res.text()
+    if (!text) return null
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  } catch (err: any) {
+    logServer("adminApiCall_exception", { method, path, error: err?.message })
+    throw err
   }
 }
 
 export async function publicApiCall(path: string, options: RequestInit = {}) {
   const url = `https://${ZEPHR_PUBLIC_BASE_URL}${path}`
-  const res = await fetch(url, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(
-      `Public API ${options.method || "GET"} ${path} failed: ${res.status} ${res.statusText} - ${text}`,
-    )
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      logServer("publicApiCall_error", { method: options.method || "GET", path, status: res.status, text })
+      throw new Error(
+        `Public API ${options.method || "GET"} ${path} failed: ${res.status} ${res.statusText} - ${text}`,
+      )
+    }
+    return res
+  } catch (err: any) {
+    logServer("publicApiCall_exception", { method: options.method || "GET", path, error: err?.message })
+    throw err
   }
-  return res
 }
 
 /* =============================================================================
@@ -199,7 +217,12 @@ export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccou
   const cached = memoGetAccounts(ownerEmail)
   if (cached) return cached
 
-  const rpp = 200 // bump if the API allows
+  if (!HAS_ADMIN_KEYS) {
+    logServer("getAccountsByOwner_skipped_no_keys", { ownerEmail })
+    return []
+  }
+
+  const rpp = 200
   const owned: ZephrAccount[] = []
   const want = ownerEmail.toLowerCase()
 
@@ -207,7 +230,13 @@ export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccou
   let totalPages: number | null = null
 
   while (true) {
-    const resp = await adminApiCall(`/v3/accounts?page=${page}&rpp=${rpp}`)
+    let resp: any
+    try {
+      resp = await adminApiCall(`/v3/accounts?page=${page}&rpp=${rpp}`)
+    } catch (e: any) {
+      logServer("getAccountsByOwner_admin_fail", { page, error: e?.message })
+      break
+    }
 
     // Normalize results with type guards
     let results: ZephrAccount[] = []
@@ -252,6 +281,7 @@ export async function getAccountsByOwner(ownerEmail: string): Promise<ZephrAccou
 
 export async function loginUser(email: string, password: string): Promise<LoginResult> {
   try {
+    logServer("login_start", { email })
     const loginResponse = await publicApiCall("/blaize/login", {
       method: "POST",
       body: JSON.stringify({
@@ -260,13 +290,11 @@ export async function loginUser(email: string, password: string): Promise<LoginR
       }),
     })
 
-    // Extract session cookie
     const setCookieHeader = loginResponse.headers.get("set-cookie") || ""
     const cookieMatch = setCookieHeader.match(/blaize_session=([^;]+)/)
     const sessionCookie = cookieMatch ? cookieMatch[1] : ""
 
-    // Fresh accounts (detects newly added owners)
-    const accounts = await getAccountsByOwner(email)
+    const accounts = HAS_ADMIN_KEYS ? await getAccountsByOwner(email) : []
     const isAdmin = accounts.length > 0
 
     const jar = await cookies()
@@ -313,8 +341,11 @@ export async function loginUser(email: string, password: string): Promise<LoginR
     // drain body for good measure
     await loginResponse.text().catch(() => "")
 
+    logServer("login_success", { email, isAdmin, accounts: accounts.length })
+
     return { success: true, isAdmin, userEmail: email, accounts }
   } catch (err: any) {
+    logServer("login_error", { email, error: err?.message })
     return { success: false, error: err?.message || "Login failed" }
   }
 }
@@ -533,175 +564,6 @@ export async function getUsersByAccount(accountId: string): Promise<ZephrUser[]>
     return []
   }
 }
-
-// ---------------------------
-// Helpers for user lifecycle
-// ---------------------------
-
-function parseUserFromAny(response: any): ZephrUser | null {
-  if (!response) return null
-  if (response.data && response.data.user_id) return response.data as ZephrUser
-  if (response.user_id) return response as ZephrUser
-  return null
-}
-
-/**
- * Try to find a user by email. The Zephr APIs aren’t fully consistent across tenants,
- * so we probe a couple of common shapes and normalize.
- */
-export async function getUserByEmail(email: string): Promise<ZephrUser | null> {
-  const enc = encodeURIComponent(email)
-  const candidatePaths = [
-    `/v3/users?email=${enc}`,                 // common
-    `/v3/users?email_address=${enc}`,         // sometimes used
-    `/v3/users/search?email_address=${enc}`,  // alternate search path
-  ]
-
-  for (const path of candidatePaths) {
-    try {
-      const res = await adminApiCall(path)
-      // responses can be {results:[...]}, {data:[...]}, or a plain array
-      const arr: any[] = Array.isArray(res)
-        ? res
-        : Array.isArray(res?.results)
-        ? res.results
-        : Array.isArray(res?.data)
-        ? res.data
-        : []
-
-      const hit = arr.find(
-        (u: any) =>
-          u?.user_id &&
-          (u?.identifiers?.email_address?.toLowerCase?.() === email.toLowerCase() ||
-            u?.user_email?.toLowerCase?.() === email.toLowerCase())
-      )
-      if (hit) {
-        // normalize user shape
-        const user: ZephrUser = {
-          user_id: hit.user_id,
-          identifiers: hit.identifiers ?? { email_address: hit.user_email ?? email },
-          attributes: hit.attributes ?? {},
-          email_verified: !!hit.email_verified,
-          created_date: hit.created_date,
-          modified_date: hit.modified_date,
-          account_id: hit.account_id,
-          user_type: hit.user_type,
-        }
-        return user
-      }
-    } catch (e) {
-      // try next strategy
-      console.warn(`[getUserByEmail] probe failed for ${path}:`, e)
-    }
-  }
-
-  return null
-}
-
-/**
- * Create a user (minimal body works; add attributes if you have them).
- */
-export async function createUser(args: {
-  email: string
-  attributes?: Record<string, any>
-  email_verified?: boolean
-}): Promise<ZephrUser> {
-  const body = {
-    identifiers: { email_address: args.email },
-    attributes: args.attributes ?? {},
-    // Some Zephr tenants accept top-level email_verified on create
-    ...(typeof args.email_verified === "boolean" ? { email_verified: args.email_verified } : {}),
-  }
-
-  const resp = await adminApiCall(`/v3/users`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  })
-
-  const user = parseUserFromAny(resp)
-  if (!user) {
-    console.warn(`[createUser] Unexpected create response shape:`, resp)
-    // last-resort normalization
-    return {
-      user_id: resp?.user_id ?? resp?.data?.user_id ?? "",
-      identifiers: resp?.identifiers ?? resp?.data?.identifiers ?? { email_address: args.email },
-      attributes: resp?.attributes ?? resp?.data?.attributes ?? {},
-      email_verified: !!(resp?.email_verified ?? resp?.data?.email_verified),
-    }
-  }
-  return user
-}
-
-/**
- * Update core user fields (e.g., email_verified). This is different from your
- * existing updateUserAttributes(), which only touches the /attributes subresource.
- */
-export async function updateUser(userId: string, patch: Partial<Pick<ZephrUser, "email_verified" | "attributes" | "user_type">>) {
-  const resp = await adminApiCall(`/v3/users/${userId}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  })
-  return parseUserFromAny(resp) ?? resp
-}
-
-/**
- * Ensure a user exists for an email. If found, optionally mark verified; else create.
- */
-export async function ensureUserExists(
-  email: string,
-  opts?: { emailVerified?: boolean; attributes?: Record<string, any> }
-): Promise<{ user: ZephrUser; created: boolean }> {
-  // 1) try to find
-  const existing = await getUserByEmail(email)
-  if (existing) {
-    if (opts?.emailVerified && !existing.email_verified) {
-      try {
-        await updateUser(existing.user_id, { email_verified: true })
-        existing.email_verified = true
-      } catch (e) {
-        console.warn(`[ensureUserExists] Failed to set email_verified on existing user ${existing.user_id}:`, e)
-      }
-    }
-    return { user: existing, created: false }
-  }
-
-  // 2) create
-  const user = await createUser({
-    email,
-    email_verified: !!opts?.emailVerified,
-    attributes: opts?.attributes,
-  })
-  return { user, created: true }
-}
-
-/**
- * Attach user to an account. Different Zephr setups use different endpoints:
- *  - POST /v3/accounts/{accountId}/users { user_id }
- *  - PUT  /v3/accounts/{accountId}/users/{userId}
- * We’ll try POST first, then fall back to PUT.
- */
-export async function addUserToAccount(accountId: string, userId: string) {
-  // Preferred: POST with body
-  try {
-    return await adminApiCall(`/v3/accounts/${accountId}/users`, {
-      method: "POST",
-      body: JSON.stringify({ user_id: userId }),
-    })
-  } catch (e) {
-    console.warn(`[addUserToAccount] POST failed, will try PUT style:`, e)
-  }
-
-  // Fallback: id in path
-  return adminApiCall(`/v3/accounts/${accountId}/users/${encodeURIComponent(userId)}`, {
-    method: "PUT",
-    body: JSON.stringify({}), // some tenants require a body; harmless if ignored
-  })
-}
-
-// Friendly alias to match the UI route example I gave you earlier:
-export const attachUserToAccount = (args: { accountId: string; userExternalId: string }) =>
-  addUserToAccount(args.accountId, args.userExternalId)
-
 
 export async function getProductsByAccount(accountId: string): Promise<ZephrProductWithGrant[]> {
   let grants: any[] = []

@@ -1,9 +1,8 @@
 // app/api/export/users/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
 import { buildUsersCsv, type ExportUsersCsvOptions } from "@/lib/csv";
 import { getUsersByAccount } from "@/lib/zephr-api";
+import { sql } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -126,10 +125,16 @@ async function doExport(req: NextRequest, options: ExportUsersCsvOptions) {
     return NextResponse.json({ error: "No active account" }, { status: 400 });
   }
 
-  const account = await prisma.accounts.findUnique({
-    where: { external_id: externalAccountId },
-    select: { name: true },
-  });
+  const { rows: accountRows } = await sql/* sql */`
+    SELECT name
+    FROM accounts
+    WHERE id::text = ${externalAccountId} OR (CASE WHEN EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name='accounts' AND column_name='external_id'
+    ) THEN external_id::text = ${externalAccountId} ELSE FALSE END)
+    LIMIT 1
+  `;
+  const account = accountRows[0] || null;
   const accountName = account?.name ?? "Account";
 
   // 1) Users from Zephr (matches UsersTable)
@@ -158,10 +163,11 @@ async function doExport(req: NextRequest, options: ExportUsersCsvOptions) {
   const userExternalIds = zephrUsers.map((u) => u.user_id);
 
   // 2) Local ID mapping (for newsletters)
-  const locals = await prisma.users.findMany({
-    where: { external_id: { in: userExternalIds } },
-    select: { id: true, external_id: true },
-  });
+  const { rows: locals } = await sql<{ id: number; external_id: string; group_id: string | null }>`
+    SELECT id, external_id, group_id
+    FROM users
+    WHERE external_id = ANY(${userExternalIds}::text[])
+  `;
   const localIdByExt = new Map<string, number>();
   for (const u of locals) localIdByExt.set(u.external_id, u.id);
   const localIds = locals.map((u) => u.id);
@@ -169,21 +175,24 @@ async function doExport(req: NextRequest, options: ExportUsersCsvOptions) {
   // 3) Group memberships in this account, keyed by Zephr user_external_id
   let membershipsByUserExt = new Map<string, Array<{ groups: GroupLite }>>();
   if (userExternalIds.length) {
-    const rows = await prisma.$queryRaw<RawMembershipRow[]>`
-      SELECT 
-        gm.user_external_id,
+        const { rows } = await sql<RawMembershipRow>`
+      SELECT
         g.id,
         g.name,
         g.slug,
+        g.color,
+        g.icon,
         g.default_template,
-        g.product_grant_ids
+        g.product_grant_ids,
+        g.demographics,
+        gm.user_external_id
       FROM public.group_memberships AS gm
       JOIN public.groups AS g
         ON g.id = gm.group_id
       JOIN public.accounts AS a
         ON a.id = g.account_id
       WHERE a.external_id = ${externalAccountId}
-        AND gm.user_external_id IN (${Prisma.join(userExternalIds)})
+        AND gm.user_external_id = ANY(${userExternalIds}::text[])
     `;
     membershipsByUserExt = new Map();
     for (const r of rows) {
@@ -202,10 +211,16 @@ async function doExport(req: NextRequest, options: ExportUsersCsvOptions) {
 
   // 4) Newsletter subs (best-effort via local ids)
   const subs = localIds.length
-    ? ((await prisma.user_newsletters.findMany({
-        where: { user_id: { in: localIds }, subscribed: true },
-        select: { user_id: true, newsletters: { select: { name: true } } },
-      })) as unknown as NewsletterRow[])
+    ? ((await sql<{ user_id: number; newsletter_name: string | null }>`
+        SELECT un.user_id, n.name as newsletter_name
+        FROM user_newsletters un
+        JOIN newsletters n ON n.id = un.newsletter_id
+        WHERE un.user_id = ANY(${localIds}::int[])
+          AND un.subscribed = true
+      `).rows.map(row => ({
+        user_id: row.user_id,
+        newsletters: row.newsletter_name ? { name: row.newsletter_name } : null
+      })) as NewsletterRow[])
     : [];
   const newslettersByUserId = new Map<number, Array<{ newsletters: { name: string | null } | null }>>();
   for (const s of subs) {
@@ -215,10 +230,14 @@ async function doExport(req: NextRequest, options: ExportUsersCsvOptions) {
   }
 
   // 5) Demographic definitions
-  const attrDefs = await prisma.attribute_definitions.findMany({
-    select: { slug: true, label: true, input_type: true },
-    orderBy: { slug: "asc" },
-  });
+    const { rows: attrDefs } = await sql<{ slug: string; label: string | null; input_type: string | null }>`
+    SELECT 
+      field_name as slug,
+      display_name as label,
+      input_type
+    FROM attribute_definitions
+    WHERE type = 'demographics'
+  `;
 
   // 6) Build clean rows for CSV
   const rows = zephrUsers.map((zu) => {

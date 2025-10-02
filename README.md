@@ -268,7 +268,7 @@ npm run dev
 ```
 
 **Database**
-- Run SQL from `/lib/db/migrations/*.sql` (or the provided Prisma/SQL scripts if present)
+- Run SQL from `/lib/db/migrations/*.sql`
 - Seed minimal data: accounts, groups
 
 **Key folders**

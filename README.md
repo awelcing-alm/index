@@ -55,6 +55,10 @@ CRON_SECRET=some-long-random
 
 # Next.js
 NODE_ENV=development
+
+# Base URL of the User Index service that handles extended profile GET/PUT
+# Example: https://user-index.internal.example.com
+USER_INDEX_BASE_URL=
 ```
 
 > **Auth:** All Zephr requests are HMAC‑SHA256 signed. We centralize signing in `lib/api-client.ts`.
@@ -372,3 +376,31 @@ lib/
 ## License
 
 Copyright reserved.
+
+## Extended Profile Proxy
+
+Configure one of the following upstream modes (default: proxy):
+
+```
+# Mode: "proxy" (default) or "zephr"
+USER_INDEX_UPSTREAM=proxy
+
+# If proxy mode: base URL for upstream service
+USER_INDEX_BASE_URL=https://user-index.internal.example.com
+
+# If zephr mode: use HMAC-signed admin API via ZEPHR_* envs
+USER_INDEX_UPSTREAM=zephr
+# Optional: override path prefix used for Zephr admin calls (default /v3/users)
+USER_INDEX_ZEPHR_PREFIX=/v3/users
+
+# Existing Zephr envs used by adminApiCall
+ZEPHR_BASE_URL= https://alm.api.zephr.com
+ZEPHR_ACCESS_KEY=...
+ZEPHR_SECRET_KEY=...
+```
+
+Routes:
+- GET /api/user-index/users/:id/profile/:appId
+- PUT /api/user-index/users/:id/profile/:appId
+
+In `zephr` mode the route uses HMAC signing (adminApiCall). In `proxy` mode it forwards the request as-is to USER_INDEX_BASE_URL.

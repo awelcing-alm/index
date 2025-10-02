@@ -11,6 +11,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -184,8 +185,7 @@ export function UserEditModal({
   // templates
   const [tplNames, setTplNames] = useState<string[]>([])
   const [tplErr, setTplErr] = useState<string | null>(null)
-  const [tplValue, setTplValue] = useState<string | null>(null)
-  const [pendingTpl, setPendingTpl] = useState<string | null>(null)
+  const [tplSelected, setTplSelected] = useState<string[]>([])
 
   // groups
   const lookups = useMemo(() => buildLookups(groups), [groups])
@@ -387,36 +387,47 @@ export function UserEditModal({
     // auto-apply default template from group (if any)
     if (resolved?.default_template) {
       const name = resolved.default_template
-      setTplValue(name)
+      setTplSelected([name])
       ;(async () => {
         try {
           const tpl = await fetchTemplate(name)
           setEdited((p) => ({ ...p, ...tpl.attributes }))
-          setPendingTpl(name)
         } catch (e) {
           console.error(e)
         }
       })()
     } else {
-      setTplValue(null)
-      setPendingTpl(null)
+      setTplSelected([])
     }
   }, [details, isOpen, lookups])
 
   /* ---------------- handlers ---------------- */
   const onAttrChange = (k: string, v: string) => setEdited((p) => ({ ...p, [k]: v }))
 
-  const onChooseTemplate = async (name: string) => {
-    if (!name) return
+  const onToggleTemplate = async (name: string) => {
     try {
-      const tpl = await fetchTemplate(name)
-      setEdited((p) => ({ ...p, ...tpl.attributes }))
-      setTplValue(name)
-      setPendingTpl(name)
       setSaveErr(null)
+      setTplSelected((prev) => {
+        if (prev.includes(name)) {
+          // deselect (do not attempt to revert merged fields)
+          return prev.filter((n) => n !== name)
+        } else {
+          // select → fetch and merge attributes
+          ;(async () => {
+            try {
+              const tpl = await fetchTemplate(name)
+              setEdited((p) => ({ ...p, ...tpl.attributes }))
+            } catch (e) {
+              console.error(e)
+              setSaveErr("Failed to apply template")
+            }
+          })()
+          return [...prev, name]
+        }
+      })
     } catch (e) {
       console.error(e)
-      setSaveErr("Failed to apply template")
+      setSaveErr("Failed to update templates")
     }
   }
 
@@ -433,8 +444,7 @@ export function UserEditModal({
       try {
         const tpl = await fetchTemplate(name)
         setEdited((p) => ({ ...p, ...tpl.attributes }))
-        setTplValue(name)
-        setPendingTpl(name)
+        setTplSelected([name])
       } catch (e) {
         console.error(e)
       }
@@ -461,8 +471,8 @@ export function UserEditModal({
         const after = lookups.resolve(edited.group)
 
         setSuccess(
-          pendingTpl
-            ? `Template “${pendingTpl}” applied & user updated!`
+          tplSelected.length > 0
+            ? `Templates “${tplSelected.join(", ")}” applied & user updated!`
             : "User updated successfully!"
         )
 
@@ -471,7 +481,7 @@ export function UserEditModal({
           oldGroupId: before?.id ?? null,
           newGroupId: after?.id ?? null,
           newAttributes: patch,
-          appliedTemplateName: pendingTpl ?? tplValue ?? null,
+          appliedTemplateName: tplSelected.length ? tplSelected.join(", ") : null,
         })
 
         setTimeout(onClose, 1200)
@@ -531,32 +541,33 @@ export function UserEditModal({
 
               {/* Template */}
               <div className="space-y-2">
-                <Label className="text-[hsl(var(--muted-foreground))]">Apply Template</Label>
+                <Label className="text-[hsl(var(--muted-foreground))]">Apply Templates</Label>
                 {tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (
-                  <Select disabled>
-                    <SelectTrigger className="rounded-none border border-line bg-paper text-[hsl(var(--muted-foreground))]">
-                      <SelectValue placeholder="No templates available" />
-                    </SelectTrigger>
-                  </Select>
+                  <Button variant="outline" className="rounded-none border border-line bg-paper text-[hsl(var(--muted-foreground))]" disabled>
+                    No templates available
+                  </Button>
                 ) : (
-                  <Select value={tplValue ?? ""} onValueChange={onChooseTemplate}>
-                    <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                      <SelectValue placeholder="Choose template…" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-none border border-line bg-paper">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="rounded-none border border-line bg-paper text-ink">
+                        {tplSelected.length > 0 ? `${tplSelected.length} selected` : "Choose templates…"}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="rounded-none border border-line bg-paper">
                       {tplNames.map((n) => (
-                        <SelectItem
+                        <DropdownMenuCheckboxItem
                           key={n}
-                          value={n}
-                          className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                          checked={tplSelected.includes(n)}
+                          onCheckedChange={() => onToggleTemplate(n)}
+                          className="rounded-none text-ink"
                         >
                           {n}
-                        </SelectItem>
+                        </DropdownMenuCheckboxItem>
                       ))}
-                    </SelectContent>
-                  </Select>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
             </div>

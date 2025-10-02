@@ -17,12 +17,14 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import {
   Loader2, Users as UsersIcon, Save, AlertTriangle, Info,
+  RefreshCw, Code, Table as TableIcon, Download,
 } from "lucide-react"
 
 import type { Group } from "@/lib/groups"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import NewsletterManagerModal from "@/components/newsletters/newsletter-manager-modal"
+import { getExtendedProfileAdmin, putExtendedProfileAdmin } from "@/lib/admin-zephr"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -192,6 +194,148 @@ export function UserEditModal({
 
   // newsletters modal state (must be inside component)
   const [newsletterOpen, setNewsletterOpen] = useState(false)
+
+  // ---------------- Extended Profile state ----------------
+  type FlatMap = Record<string, string | number | boolean | null>
+  const [epAppId, setEpAppId] = useState("")
+  const [epMode, setEpMode] = useState<"json" | "table">("json")
+  const [epJsonText, setEpJsonText] = useState<string>(`{
+  "first_name": "John",
+  "last_name": "Doe"
+}`)
+  const [epOrigFlat, setEpOrigFlat] = useState<FlatMap>({})
+  const [epFlat, setEpFlat] = useState<FlatMap>({})
+  const [epBusy, setEpBusy] = useState<{ load: boolean; save: boolean }>({ load: false, save: false })
+  const [epErr, setEpErr] = useState<string | null>(null)
+  const epRows = useMemo(() => Object.entries(epFlat).sort(([a], [b]) => a.localeCompare(b)), [epFlat])
+
+  // Helpers
+  const isPlainObject = (v: any) => v && typeof v === "object" && !Array.isArray(v)
+  const tryParseJsonString = (s: any) => {
+    if (typeof s !== "string") return s
+    try { return JSON.parse(s) } catch { return s }
+  }
+  function flatten(obj: any, prefix = ""): FlatMap {
+    const out: FlatMap = {}
+    const walk = (o: any, path: string[]) => {
+      if (o == null) { out[path.join(".")] = null; return }
+      if (typeof o !== "object") { out[path.join(".")] = o as any; return }
+      if (Array.isArray(o)) {
+        o.forEach((v, i) => walk(v, [...path, String(i)]))
+        return
+      }
+      for (const [k, v] of Object.entries(o)) walk(v, [...path, k])
+    }
+    if (isPlainObject(obj)) for (const [k, v] of Object.entries(obj)) walk(v, [k])
+    return out
+  }
+  function unflatten(map: FlatMap): any {
+    const root: any = {}
+    for (const [key, value] of Object.entries(map)) {
+      const parts = key.split(".")
+      let cur: any = root
+      parts.forEach((p, i) => {
+        const isLast = i === parts.length - 1
+        const nextKey = parts[i + 1]
+        const shouldBeArray = !isLast && /^\d+$/.test(nextKey || "")
+        if (isLast) {
+          cur[p] = value
+        } else {
+          if (!(p in cur)) cur[p] = shouldBeArray ? [] : {}
+          cur = cur[p]
+        }
+      })
+    }
+    return root
+  }
+  function diffFlat(a: FlatMap, b: FlatMap) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+    const changes: Array<{ key: string; kind: "added" | "removed" | "changed"; from?: any; to?: any }> = []
+    for (const k of keys) {
+      const va = a[k]
+      const vb = b[k]
+      if (va === undefined && vb !== undefined) changes.push({ key: k, kind: "added", to: vb })
+      else if (va !== undefined && vb === undefined) changes.push({ key: k, kind: "removed", from: va })
+      else if (va !== vb) changes.push({ key: k, kind: "changed", from: va, to: vb })
+    }
+    return changes
+  }
+
+  async function epLoad() {
+    if (!details) return
+    setEpBusy((p) => ({ ...p, load: true })); setEpErr(null)
+    try {
+      if (!epAppId) throw new Error("Enter App ID")
+      const res = await getExtendedProfileAdmin(details.user_id, epAppId)
+      if (!res.ok) throw new Error(`${res.status} fetching profile`)
+      let payload: any = res.json
+      if (payload && typeof payload === "object" && "message" in payload && (payload as any).message != null) {
+        const inner = tryParseJsonString((payload as any).message)
+        if (isPlainObject(inner)) payload = inner
+      }
+      if (!isPlainObject(payload)) payload = {}
+      const flatNow = flatten(payload)
+      setEpOrigFlat(flatNow)
+      setEpFlat(flatNow)
+      setEpJsonText(JSON.stringify(payload, null, 2))
+      setEpMode("table")
+    } catch (e: any) {
+      setEpErr(e?.message || "Failed to load profile")
+    } finally {
+      setEpBusy((p) => ({ ...p, load: false }))
+    }
+  }
+
+  async function epSaveFromTable() {
+    const bodyObj = unflatten(epFlat)
+    setEpJsonText(JSON.stringify(bodyObj, null, 2))
+    await epSave(bodyObj)
+  }
+  async function epSaveFromJson() {
+    let obj: unknown
+    try { obj = JSON.parse(epJsonText) } catch (e: any) { setEpErr(`Invalid JSON: ${e?.message}`); return }
+    if (isPlainObject(obj)) {
+      const f = flatten(obj as any)
+      setEpFlat(f)
+      if (Object.keys(epOrigFlat).length === 0) setEpOrigFlat(f)
+    }
+    await epSave(obj)
+  }
+  async function epSave(obj: unknown) {
+    if (!details) return
+    setEpBusy((p) => ({ ...p, save: true })); setEpErr(null)
+    try {
+      if (!epAppId) throw new Error("Enter App ID")
+      const res = await putExtendedProfileAdmin(details.user_id, epAppId, obj)
+      if (!res.ok) throw new Error(`${res.status} saving profile`)
+      const afterFlat = isPlainObject(obj) ? flatten(obj as any) : {}
+      const changes = diffFlat(epOrigFlat, afterFlat)
+      setEpOrigFlat(afterFlat)
+      setSuccess(
+        changes.length === 0
+          ? "Profile saved (no changes)"
+          : `Profile updated (${changes.length} ${changes.length === 1 ? "change" : "changes"})`,
+      )
+    } catch (e: any) {
+      setEpErr(e?.message || "Failed to save profile")
+    } finally {
+      setEpBusy((p) => ({ ...p, save: false }))
+    }
+  }
+  function epUpdateCell(key: string, raw: string) {
+    const trimmed = raw.trim()
+    let val: any = raw
+    if (/^(true|false)$/i.test(trimmed)) val = /^true$/i.test(trimmed)
+    else if (trimmed === "null") val = null
+    else if (trimmed !== "" && !isNaN(Number(trimmed))) {
+      if (!/^0[0-9]+$/.test(trimmed)) val = Number(trimmed)
+    }
+    setEpFlat((prev) => ({ ...prev, [key]: val }))
+  }
+  function epPretty() {
+    try { setEpJsonText(JSON.stringify(JSON.parse(epJsonText), null, 2)) }
+    catch (e: any) { setEpErr(`Cannot pretty-print: ${e?.message || "invalid JSON"}`) }
+  }
 
   const details = userDetails
 
@@ -520,6 +664,127 @@ export function UserEditModal({
               </CardContent>
             </Card>
           )
+        )}
+
+        {/* NEW: Extended Profile */}
+        {details && (
+          <Card className="mt-4 rounded-none border border-line bg-paper">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-serif text-lg text-ink">Extended Profile</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {epErr && (
+                <Alert variant="destructive" className="rounded-none">
+                  <AlertDescription>{epErr}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* IDs */}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-1">
+                  <Label>User ID</Label>
+                  <Input value={details.user_id} disabled className="bg-[hsl(var(--muted))]/20" />
+                </div>
+                <div className="grid gap-1">
+                  <Label>App ID</Label>
+                  <Input placeholder="my-app-id" value={epAppId} onChange={(e) => setEpAppId(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Mode toggle & actions */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 border rounded-md overflow-hidden">
+                  <Button type="button" variant={epMode === "table" ? "default" : "outline"} size="sm" onClick={() => setEpMode("table")}>
+                    <TableIcon className="h-4 w-4" />
+                    <span className="ml-2">Table</span>
+                  </Button>
+                  <Button type="button" variant={epMode === "json" ? "default" : "outline"} size="sm" onClick={() => setEpMode("json")}>
+                    <Code className="h-4 w-4" />
+                    <span className="ml-2">JSON</span>
+                  </Button>
+                </div>
+
+                <Button variant="outline" size="sm" onClick={epLoad} disabled={epBusy.load || !epAppId}>
+                  {epBusy.load ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  <span className="ml-2">Load Current</span>
+                </Button>
+
+                {epMode === "json" ? (
+                  <Button onClick={epSaveFromJson} disabled={epBusy.save || !epAppId}>
+                    {epBusy.save ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    <span className="ml-2">Save (JSON)</span>
+                  </Button>
+                ) : (
+                  <Button onClick={epSaveFromTable} disabled={epBusy.save || !epAppId}>
+                    {epBusy.save ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    <span className="ml-2">Save (Table)</span>
+                  </Button>
+                )}
+
+                {epMode === "json" && (
+                  <Button variant="outline" size="sm" onClick={epPretty} title="Pretty-print JSON">
+                    <Download className="h-4 w-4" />
+                    <span className="ml-2">Pretty</span>
+                  </Button>
+                )}
+              </div>
+
+              {/* Editor / Table */}
+              {epMode === "json" ? (
+                <textarea
+                  value={epJsonText}
+                  onChange={(e) => setEpJsonText(e.target.value)}
+                  className="font-mono text-sm min-h-[260px] w-full rounded-md border border-line bg-paper p-2"
+                />
+              ) : (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-neutral-50">
+                      <tr className="text-left">
+                        <th className="px-3 py-2 w-[40%]">Key (dot path)</th>
+                        <th className="px-3 py-2">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {epRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} className="px-3 py-8 text-center text-neutral-500">
+                            No properties. Load current, or switch to JSON to add keys.
+                          </td>
+                        </tr>
+                      ) : (
+                        epRows.map(([k, v]) => (
+                          <tr key={k} className="border-t align-top">
+                            <td className="px-3 py-2 font-mono text-xs text-neutral-700">{k}</td>
+                            <td className="px-3 py-2">
+                              {typeof v === "boolean" ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4"
+                                    checked={!!v}
+                                    onChange={(e) => epUpdateCell(k, e.target.checked ? "true" : "false")}
+                                  />
+                                  <span className="text-xs text-neutral-600">(boolean)</span>
+                                </div>
+                              ) : (
+                                <Input
+                                  value={v == null ? "" : String(v)}
+                                  onChange={(e) => epUpdateCell(k, e.target.value)}
+                                  placeholder="null / text / number"
+                                  className="text-sm"
+                                />
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         )}
 
         {/* actions */}

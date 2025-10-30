@@ -129,7 +129,6 @@ export async function ProductsPage() {
                             </div>
                             <div>
                               <span className="font-medium text-ink">{product.label}</span>
-                              <p className="text-xs text-[hsl(var(--muted-foreground))]">ID: {product.id}</p>
                             </div>
                           </div>
                         </TableCell>
@@ -139,12 +138,6 @@ export async function ProductsPage() {
                             <p className="text-sm">
                               {product.description || "No description available"}
                             </p>
-                            {product.entitlement && (
-                              <p className="text-xs">
-                                {product.entitlement.type}: {product.entitlement.id}
-                              </p>
-                            )}
-                            {product.grantId && <p className="text-xs">Grant: {product.grantId}</p>}
                           </div>
                         </TableCell>
 

@@ -8,6 +8,8 @@ import {
 import {
   Card, CardContent, CardHeader, CardTitle,
 } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -17,7 +19,7 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import {
   Loader2, Users as UsersIcon, Save, AlertTriangle, Info,
-  Radar as RadarIcon, Compass as CompassIcon, GraduationCap,
+  Radar as RadarIcon, Compass as CompassIcon, GraduationCap, BookOpen,
 } from "lucide-react"
 
 import type { Group } from "@/lib/groups"
@@ -25,6 +27,7 @@ import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import NewsletterManagerModal from "@/components/newsletters/newsletter-manager-modal"
 import type { ProductKey } from "@/lib/product-templates"
+import { sanitizeMyLawProfile, describeMyLaw, sanitizeRadarProfile, describeRadar } from "@/lib/product-profiles"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -196,7 +199,7 @@ export function UserEditModal({
   const [newsletterOpen, setNewsletterOpen] = useState(false)
 
   // Extended Profile app availability + editor
-  const [appAvail, setAppAvail] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean }>({})
+  const [appAvail, setAppAvail] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean }>({})
   const [appErr, setAppErr] = useState<string | null>(null)
   const [activeApp, setActiveApp] = useState<ProductKey | null>(null)
   const [appLoading, setAppLoading] = useState(false)
@@ -237,7 +240,7 @@ export function UserEditModal({
         const payload = await res.json()
         const a = payload?.availability || {}
         if (!alive) return
-        setAppAvail({ radar: !!a.radar?.exists, compass: !!a.compass?.exists, scholar: !!a.scholar?.exists })
+  setAppAvail({ radar: !!a.radar?.exists, compass: !!a.compass?.exists, scholar: !!a.scholar?.exists, mylaw: !!a.mylaw?.exists })
       } catch (e: any) {
         if (!alive) return
         setAppErr(e?.message || "Failed to check app profiles")
@@ -459,6 +462,19 @@ export function UserEditModal({
               </button>
               <button
                 type="button"
+                onClick={() => loadAppProfile("mylaw")}
+                className={[
+                  "flex items-center gap-1 rounded-md border px-2 py-1",
+                  appAvail.mylaw ? "border-amber-600 ring-2 ring-amber-300 animate-pulse" : "border-line",
+                  "hover:bg-[hsl(var(--muted))]",
+                ].join(" ")}
+                title={appAvail.mylaw ? "MyLaw profile available" : "No MyLaw profile yet"}
+              >
+                <BookOpen className="h-4 w-4 text-ink" />
+                <span className="text-sm">MyLaw</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => loadAppProfile("compass")}
                 className={[
                   "flex items-center gap-1 rounded-md border px-2 py-1",
@@ -564,6 +580,163 @@ export function UserEditModal({
                 </div>
               ) : (
                 <>
+                  {activeApp === "radar" && (
+                    <div className="rounded-none border border-line bg-paper p-3">
+                      {(() => {
+                        try {
+                          const raw = JSON.parse(appDraft || "{}")
+                          const normalized = sanitizeRadarProfile(raw)
+                          const view = describeRadar(normalized)
+                          return (
+                            <div className="space-y-4">
+                              {/* meta */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
+                                <span className="ml-2 hidden h-5 w-px bg-[hsl(var(--border))] md:inline-block" />
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Topics: {view.counts.topics}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Companies: {view.counts.companies}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Law Firms: {view.counts.lawFirms}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Virtual: {view.counts.virtualCategories}</Badge>
+                              </div>
+                              <Separator className="bg-[hsl(var(--border))]" />
+                              <div className="grid gap-4 md:grid-cols-2">
+                                {!!view.topics.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Radar Topics</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.topics.map((t) => (
+                                          <Badge key={`${t.id}-${t.name}`} variant="outline" className="rounded-none border-line text-ink">{t.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {!!view.companies.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Companies</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.companies.map((c) => (
+                                          <Badge key={`${c.id}-${c.name}`} variant="outline" className="rounded-none border-line text-ink">{c.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {!!view.lawFirms.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Law Firms</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.lawFirms.map((lf) => (
+                                          <Badge key={`${lf.id}-${lf.name}`} variant="outline" className="rounded-none border-line text-ink">{lf.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {!!view.virtualCategories.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Virtual Categories</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.virtualCategories.map((v) => (
+                                          <Badge key={`${v.id}-${v.name}`} variant="outline" className="rounded-none border-line text-ink">{v.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        } catch {
+                          return <div className="text-sm text-[hsl(var(--muted-foreground))]">Invalid Radar JSON</div>
+                        }
+                      })()}
+                    </div>
+                  )}
+                  {activeApp === "mylaw" && (
+                    <div className="rounded-none border border-line bg-paper p-3">
+                      {(() => {
+                        try {
+                          const raw = JSON.parse(appDraft || "{}")
+                          const normalized = sanitizeMyLawProfile(raw)
+                          const view = describeMyLaw(normalized)
+                          return (
+                            <div className="space-y-4">
+                              {/* meta */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
+                                <span className="ml-2 hidden h-5 w-px bg-[hsl(var(--border))] md:inline-block" />
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Topics: {view.counts.topics}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Industries: {view.counts.industries}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Practice Areas: {view.counts.practiceAreas}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Virtual: {view.counts.virtualCategories}</Badge>
+                              </div>
+                              <Separator className="bg-[hsl(var(--border))]" />
+                              <div className="grid gap-4 md:grid-cols-2">
+                                {!!view.topics.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">MyLaw Topics</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.topics.map((t) => (
+                                          <Badge key={`${t.id}-${t.name}`} variant="outline" className="rounded-none border-line text-ink">{t.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {!!view.industries?.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Industries</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.industries.map((c: any) => (
+                                          <Badge key={`${c.id}-${c.name}`} variant="outline" className="rounded-none border-line text-ink">{c.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {!!view.practiceAreas?.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Practice Areas</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.practiceAreas.map((c: any) => (
+                                          <Badge key={`${c.id}-${c.name}`} variant="outline" className="rounded-none border-line text-ink">{c.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {!!view.virtualCategories.length && (
+                                  <div>
+                                    <div className="mb-1 text-sm font-medium text-ink">Virtual Categories</div>
+                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {view.virtualCategories.map((v) => (
+                                          <Badge key={`${v.id}-${v.name}`} variant="outline" className="rounded-none border-line text-ink">{v.name}</Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        } catch {
+                          return <div className="text-sm text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div>
+                        }
+                      })()}
+                    </div>
+                  )}
+
                   <textarea
                     value={appDraft}
                     onChange={(e) => setAppDraft(e.target.value)}

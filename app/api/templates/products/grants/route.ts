@@ -16,11 +16,13 @@ export async function GET() {
 
     const hasRadar = products.some((p) => isProductMatch(p, "radar"))
     const hasCompass = products.some((p) => isProductMatch(p, "compass"))
-    const hasScholar = products.some((p) => isProductMatch(p, "scholar"))
+  const hasScholar = products.some((p) => isProductMatch(p, "scholar"))
+  const hasMyLaw = products.some((p) => isProductMatch(p, "mylaw"))
 
-    const radarOk = hasRadar && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.radar))
-    const compassOk = hasCompass && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.compass))
-    const scholarOk = hasScholar && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.scholar))
+  const radarOk = hasRadar && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.radar))
+  const compassOk = hasCompass && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.compass))
+  const scholarOk = hasScholar && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.scholar))
+  const mylawOk = hasMyLaw && (await hasExtendedProfileApp(accountId, PRODUCT_APP_IDS.mylaw))
 
     return NextResponse.json({
       ok: true,
@@ -30,6 +32,7 @@ export async function GET() {
         radar: !!radarOk,
         compass: !!compassOk,
         scholar: !!scholarOk,
+        mylaw: !!mylawOk,
       },
     })
   } catch (err: any) {

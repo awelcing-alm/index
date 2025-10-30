@@ -113,6 +113,8 @@ export default function GroupManagerPage() {
   const [products, setProducts] = useState<ProductOption[]>([])
   const [selectedGrantIds, setSelectedGrantIds] = useState<string[]>([])
   const [templates, setTemplates] = useState<string[]>([])
+  const [productTemplates, setProductTemplates] = useState<{ radar: string[]; compass: string[]; scholar: string[]; mylaw: string[] }>({ radar: [], compass: [], scholar: [], mylaw: [] })
+  const [selectedProductTpls, setSelectedProductTpls] = useState<{ radar?: string; compass?: string; scholar?: string; mylaw?: string }>({})
 
   const [countryOpts, setCountryOpts] = useState<string[]>([])
   const [jobFunctionOpts, setJobFunctionOpts] = useState<string[]>([])
@@ -196,6 +198,32 @@ export default function GroupManagerPage() {
     return () => { alive = false }
   }, [])
 
+  // fetch product templates (best-effort)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const [radar, compass, scholar, mylaw] = await Promise.all([
+          fetch("/api/product-templates/radar", { cache: "no-store" }).then(r => r.ok ? r.json() : []),
+          fetch("/api/product-templates/compass", { cache: "no-store" }).then(r => r.ok ? r.json() : []),
+          fetch("/api/product-templates/scholar", { cache: "no-store" }).then(r => r.ok ? r.json() : []),
+          fetch("/api/product-templates/mylaw", { cache: "no-store" }).then(r => r.ok ? r.json() : []),
+        ])
+        if (!alive) return
+        setProductTemplates({
+          radar: (Array.isArray(radar) ? radar : []).filter(Boolean).sort(),
+          compass: (Array.isArray(compass) ? compass : []).filter(Boolean).sort(),
+          scholar: (Array.isArray(scholar) ? scholar : []).filter(Boolean).sort(),
+          mylaw: (Array.isArray(mylaw) ? mylaw : []).filter(Boolean).sort(),
+        })
+      } catch {
+        if (!alive) return
+        setProductTemplates({ radar: [], compass: [], scholar: [], mylaw: [] })
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
   // user schema (country, job-function, job-area)
   useEffect(() => {
     let alive = true
@@ -263,6 +291,7 @@ export default function GroupManagerPage() {
         ...(country     ? { "country": country } : {}),
         ...(jobFunction ? { "job-function": jobFunction } : {}),
         ...(jobArea     ? { "job-area": jobArea } : {}),
+        ...(Object.keys(selectedProductTpls).length ? { "product-templates": selectedProductTpls } : {}),
       },
     }
 
@@ -374,6 +403,29 @@ export default function GroupManagerPage() {
               </select>
             </div>
 
+            {/* Product templates (optional) */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium mb-1">Product Templates (optional)</label>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+                {(["radar","compass","scholar","mylaw"] as const).map((k) => (
+                  <div key={k} className="space-y-1">
+                    <div className="text-xs text-[hsl(var(--muted-foreground))] capitalize">{k}</div>
+                    <select
+                      className="w-full rounded-md border px-3 py-2 bg-white/5"
+                      value={selectedProductTpls[k] || ""}
+                      onChange={(e) => setSelectedProductTpls((p) => ({ ...p, [k]: e.target.value || undefined }))}
+                    >
+                      <option value="">— None —</option>
+                      {productTemplates[k].map((n) => (
+                        <option key={`${k}:${n}`} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">Saved into group demographics under “product-templates”.</p>
+            </div>
+
             {/* Products */}
             <div>
               <label className="block text-sm font-medium mb-1">Products (grants)</label>
@@ -388,10 +440,10 @@ export default function GroupManagerPage() {
               >
                 {products.map((p) => {
                   const value = p.grantId ?? p.id
-                  const label = p.label || p.id
+                  const label = p.label || "Product"
                   return (
                     <option key={`${p.id}-${value}`} value={value}>
-                      {label} — {value}
+                      {label}
                     </option>
                   )
                 })}

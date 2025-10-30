@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { sql } from "@/lib/db"
+import { getProductsForCurrentAccount } from "@/lib/zephr-api"
+import { isProductMatch } from "@/lib/product-templates"
+import { applyNewsletterPolicy } from "@/lib/product-policy"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -61,15 +64,29 @@ export async function POST(req: Request) {
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ ok: false, error: "No account" }, { status: 401 })
 
-    const body = (await req.json().catch(() => ({}))) as SaveBody
+  const body = (await req.json().catch(() => ({}))) as SaveBody
     const name = String(body?.name ?? "").trim()
     const description = typeof body?.description === "string" ? body.description.trim() : null
-    const attributes = body?.attributes && typeof body.attributes === "object" ? body.attributes : {}
+  let attributes = body?.attributes && typeof body.attributes === "object" ? body.attributes : {}
     const overwriteFalse = body?.overwriteFalse === true
 
     if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 })
     if (RESERVED.has(name.toLowerCase())) {
       return NextResponse.json({ ok: false, error: "Default templates are not editable" }, { status: 409 })
+    }
+
+    // Enforce newsletter-policy against product grants
+    try {
+      const products = await getProductsForCurrentAccount()
+      const grants = {
+        radar: products.some((p) => isProductMatch(p, "radar")),
+        compass: products.some((p) => isProductMatch(p, "compass")),
+        scholar: products.some((p) => isProductMatch(p, "scholar")),
+        mylaw: products.some((p) => isProductMatch(p, "mylaw")),
+      }
+      attributes = applyNewsletterPolicy(grants, attributes)
+    } catch {
+      // best-effort; if grants lookup fails, proceed without mutation
     }
 
     await sql/* sql */`

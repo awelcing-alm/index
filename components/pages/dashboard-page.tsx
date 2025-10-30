@@ -257,7 +257,7 @@ export async function DashboardPage() {
                       </div>
                       <div>
                         <p className="text-sm font-medium text-ink">{p.label}</p>
-                        <p className="text-xs text-[hsl(var(--muted-foreground))]">ID: {p.id}</p>
+                        {/* Intentionally hide product codes/IDs for cleaner client UI */}
                       </div>
                     </div>
                     <Badge

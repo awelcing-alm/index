@@ -2,6 +2,9 @@ import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { sql } from "@/lib/db"
 import { NEWSLETTER_KEYS } from "@/lib/newsletters"
+import { getProductsForCurrentAccount } from "@/lib/zephr-api"
+import { isProductMatch } from "@/lib/product-templates"
+import { applyNewsletterPolicy } from "@/lib/product-policy"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -30,7 +33,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ name: string }>
     const { name } = await (ctx as any).params
     const tplName = decodeURIComponent(name)
 
-    const jar = cookies()
+  const jar = await cookies()
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ error: "No account" }, { status: 401 })
 
@@ -89,7 +92,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ name: string }>
   try {
     const { name } = await (ctx as any).params
     const tplName = decodeURIComponent(name)
-    const jar = cookies()
+  const jar = await cookies()
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ ok: false, error: "No account" }, { status: 401 })
 
@@ -99,8 +102,22 @@ export async function PUT(req: Request, ctx: { params: Promise<{ name: string }>
 
     const body = await req.json().catch(() => ({}))
     const description = typeof body?.description === "string" ? body.description.trim() : null
-    const attributes = body?.attributes && typeof body.attributes === "object" ? body.attributes : {}
+    let attributes = body?.attributes && typeof body.attributes === "object" ? body.attributes : {}
     const overwriteFalse = body?.overwriteFalse === true
+
+    // Enforce newsletter-policy against product grants
+    try {
+      const products = await getProductsForCurrentAccount()
+      const grants = {
+        radar: products.some((p) => isProductMatch(p, "radar")),
+        compass: products.some((p) => isProductMatch(p, "compass")),
+        scholar: products.some((p) => isProductMatch(p, "scholar")),
+        mylaw: products.some((p) => isProductMatch(p, "mylaw")),
+      }
+      attributes = applyNewsletterPolicy(grants, attributes)
+    } catch {
+      // best-effort
+    }
 
     await sql/* sql */`
       INSERT INTO public.templates (account_id, name, type, description, attributes, overwrite_false, is_default)
@@ -121,7 +138,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ name: string
   try {
     const { name } = await (ctx as any).params
     const tplName = decodeURIComponent(name)
-    const jar = cookies()
+  const jar = await cookies()
     const accountId = jar.get("active_account_id")?.value || ""
     if (!accountId) return NextResponse.json({ ok: false, error: "No account" }, { status: 401 })
 

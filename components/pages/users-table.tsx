@@ -60,6 +60,7 @@ import {
   Filter as FilterIcon,
   X,
 } from "lucide-react"
+import { Radar as RadarIcon, Compass as CompassIcon, GraduationCap, BookOpen } from "lucide-react"
 
 import { GroupIconInline } from "@/components/group-icon"
 
@@ -175,6 +176,10 @@ export default function UsersTable({
   const [error, setError] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(true)
   const [, startTransition] = useTransition()
+
+  // Extended Profile availability & filter (Radar/MyLaw/Compass/Scholar)
+  const [profilesByUser, setProfilesByUser] = useState<Record<string, { radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>>({})
+  const [profileFilter, setProfileFilter] = useState<{ radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>({})
 
   /* template names (defaults + custom) */
   const [templateNames, setTemplateNames] = useState<string[]>([])
@@ -363,7 +368,12 @@ export default function UsersTable({
       row.original.attributes?.lastname || row.original.attributes?.surname || "",
     ).toLowerCase()
     const name = `${fn} ${ln}`.trim()
-    return email.includes(q) || name.includes(q)
+    const textHit = email.includes(q) || name.includes(q)
+    const selected = Object.entries(profileFilter).filter(([, v]) => v)
+    if (!selected.length) return textHit
+    const flags = profilesByUser[row.original.user_id] || {}
+    const hasAll = selected.every(([k]) => (flags as any)[k])
+    return textHit && hasAll
   }
 
   const setAllOnPage = (checked: boolean, tbl: any) => {
@@ -485,6 +495,30 @@ export default function UsersTable({
       enableColumnFilter: false,
     }),
     col.display({
+      id: "profiles",
+      header: () => <span className="text-ink">Profiles</span>,
+      cell: ({ row }) => {
+        const f = profilesByUser[row.original.user_id] || {}
+        const iconCls = (on?: boolean) =>
+          [
+            "h-4 w-4",
+            on ? "text-ink" : "text-[hsl(var(--muted-foreground))] opacity-50",
+          ].join(" ")
+        return (
+          <div className="flex items-center gap-2">
+            <span className="sr-only">Profiles</span>
+            <RadarIcon className={iconCls(f.radar)} />
+            <BookOpen className={iconCls(f.mylaw)} />
+            <CompassIcon className={iconCls(f.compass)} />
+            <GraduationCap className={iconCls(f.scholar)} />
+          </div>
+        )
+      },
+      enableSorting: false,
+      enableColumnFilter: false,
+      size: 120,
+    }),
+    col.display({
       id: "edit",
       header: () => <span className="text-ink">Edit</span>,
       cell: ({ row }) => {
@@ -536,6 +570,20 @@ export default function UsersTable({
     if (key === lastMembershipKey.current) return
     lastMembershipKey.current = key
     refreshMemberships(ids)
+    ;(async () => {
+      if (!ids.length) return
+      try {
+        const qs = encodeURIComponent(ids.join(","))
+        const res = await fetch(`/api/users/extended-profiles/availability?user_ids=${qs}`, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        })
+        if (!res.ok) return
+        const payload = await res.json().catch(() => null)
+        const map = (payload && payload.availability) || {}
+        setProfilesByUser((prev) => ({ ...prev, ...map }))
+      } catch {}
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, pagination.pageIndex, pagination.pageSize, sorting, columnFilters, globalFilter])
 
@@ -715,6 +763,35 @@ export default function UsersTable({
 
   return (
     <>
+      {/* Profile filters */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-[hsl(var(--muted-foreground))]">Profiles:</span>
+        {(["radar","mylaw","compass","scholar"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setProfileFilter((p) => ({ ...p, [k]: !p[k] }))}
+            className={[
+              "rounded-none border px-2 py-1 text-xs transition-colors",
+              profileFilter[k]
+                ? "border-blue-600 bg-blue-600/10 text-ink"
+                : "border-line bg-paper text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]",
+            ].join(" ")}
+          >
+            {k[0].toUpperCase() + k.slice(1)}
+          </button>
+        ))}
+        {Object.values(profileFilter).some(Boolean) && (
+          <button
+            type="button"
+            onClick={() => setProfileFilter({})}
+            className="rounded-none border border-line px-2 py-1 text-xs text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]"
+            title="Clear profile filters"
+          >
+            Clear
+          </button>
+        )}
+      </div>
       {error && (
         <Alert variant="destructive" className="mb-4 rounded-none">
           <AlertDescription>{error}</AlertDescription>

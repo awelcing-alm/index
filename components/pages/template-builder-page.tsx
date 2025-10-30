@@ -16,14 +16,17 @@ import {
   ALL_NEWSLETTER_GROUPS,
   type NewsletterSlug,
 } from "@/lib/newsletters"
+import { computeDisabledNewsletterSlugs, applyNewsletterPolicy } from "@/lib/product-policy"
 import { getActiveAccountId } from "@/lib/account-store"
 import { DefaultTemplatesSection } from "@/components/pages/default-templates-section"
 
 /* ---------------- types ---------------- */
+type Kind = "newsletter" | "radar" | "compass" | "scholar" | "mylaw"
+
 interface Template {
   name: string
   description: string
-  attributes: Record<string, boolean>
+  attributes: Record<string, any>
   overwriteFalse: boolean
   createdAt: string
   updatedAt?: string
@@ -32,9 +35,10 @@ interface Template {
 /* ---------------- helpers (API) ---------------- */
 
 // Names: only account-custom (avoid default duplicates in Manage tab)
-const apiGetNames = async (): Promise<string[]> => {
+const apiGetNames = async (kind: Kind): Promise<string[]> => {
   try {
-    const res = await fetch("/api/templates?scope=custom&format=array", {
+    const path = kind === "newsletter" ? "/api/templates?scope=custom&format=array" : `/api/product-templates/${kind}`
+    const res = await fetch(path, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     })
@@ -48,9 +52,12 @@ const apiGetNames = async (): Promise<string[]> => {
   }
 }
 
-const apiGetTpl = async (name: string): Promise<Template | null> => {
+const apiGetTpl = async (kind: Kind, name: string): Promise<Template | null> => {
   try {
-    const res = await fetch(`/api/templates/${encodeURIComponent(name)}`, {
+    const path = kind === "newsletter"
+      ? `/api/templates/${encodeURIComponent(name)}`
+      : `/api/product-templates/${kind}/${encodeURIComponent(name)}`
+    const res = await fetch(path, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     })
@@ -79,7 +86,7 @@ const apiGetTpl = async (name: string): Promise<Template | null> => {
   }
 }
 
-const apiSaveTpl = async (tpl: Template, exists: boolean) => {
+const apiSaveTpl = async (kind: Kind, tpl: Template, exists: boolean) => {
   // Only send fields the API expects
   const payload = {
     name: tpl.name,
@@ -87,7 +94,8 @@ const apiSaveTpl = async (tpl: Template, exists: boolean) => {
     attributes: tpl.attributes ?? {},
     overwriteFalse: !!tpl.overwriteFalse,
   }
-  const res = await fetch(`/api/templates${exists ? `/${encodeURIComponent(tpl.name)}` : ""}`, {
+  const base = kind === "newsletter" ? "/api/templates" : `/api/product-templates/${kind}`
+  const res = await fetch(`${base}${exists && kind === "newsletter" ? `/${encodeURIComponent(tpl.name)}` : (exists ? `/${encodeURIComponent(tpl.name)}` : "")}`.replace(/\/+/g, "/"), {
     method: exists ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -98,8 +106,11 @@ const apiSaveTpl = async (tpl: Template, exists: boolean) => {
   }
 }
 
-const apiDeleteTpl = async (name: string) => {
-  const res = await fetch(`/api/templates/${encodeURIComponent(name)}`, { method: "DELETE" })
+const apiDeleteTpl = async (kind: Kind, name: string) => {
+  const path = kind === "newsletter"
+    ? `/api/templates/${encodeURIComponent(name)}`
+    : `/api/product-templates/${kind}/${encodeURIComponent(name)}`
+  const res = await fetch(path, { method: "DELETE" })
   if (!res.ok) {
     const msg = await res.text().catch(() => "")
     throw new Error(msg || `Delete failed (${res.status})`)
@@ -116,6 +127,7 @@ const emptyTpl = (): Template => ({
 })
 
 export default function TemplateBuilderPage() {
+  const [kind, setKind] = useState<Kind>("newsletter")
   const [templates, setTemplates] = useState<Template[]>([])
   const [current, setCurrent] = useState<Template>(emptyTpl())
   const [isEditing, setIsEditing] = useState(false)
@@ -125,7 +137,7 @@ export default function TemplateBuilderPage() {
   const [err, setErr] = useState<string>("")
 
   // Product-template gating (Radar / Compass / Scholar)
-  const [productGrants, setProductGrants] = useState<{ radar: boolean; compass: boolean; scholar: boolean } | null>(null)
+  const [productGrants, setProductGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
   const [productGrantError, setProductGrantError] = useState<string>("")
 
   const accId = getActiveAccountId()
@@ -137,13 +149,13 @@ export default function TemplateBuilderPage() {
     ;(async () => {
       setErr("")
       try {
-        const names = await apiGetNames()
+        const names = await apiGetNames(kind)
         if (cancelled) return
         if (!names.length) {
           setTemplates([])
           return
         }
-        const fetched = await Promise.all(names.map(apiGetTpl))
+        const fetched = await Promise.all(names.map((n) => apiGetTpl(kind, n)))
         if (cancelled) return
         const list = (fetched.filter(Boolean) as Template[]).sort((a, b) =>
           a.name.localeCompare(b.name)
@@ -160,7 +172,7 @@ export default function TemplateBuilderPage() {
     return () => {
       cancelled = true
     }
-  }, [accId])
+  }, [accId, kind])
 
   // load product-template gating flags once per account
   useEffect(() => {
@@ -174,8 +186,8 @@ export default function TemplateBuilderPage() {
         if (!res.ok) throw new Error(await res.text())
         const payload = await res.json().catch(() => ({}))
         if (!alive) return
-        const g = payload?.grants || {}
-        setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar })
+  const g = payload?.grants || {}
+  setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: !!g.mylaw })
       } catch (e: any) {
         if (!alive) return
         setProductGrantError(e?.message || "Failed to check product access")
@@ -185,17 +197,18 @@ export default function TemplateBuilderPage() {
     return () => { alive = false }
   }, [accId])
 
-  const buildAttributePayload = (): Record<string, boolean> => {
+  const buildAttributePayload = (): Record<string, any> => {
+    if (kind !== "newsletter") return { ...current.attributes }
     if (!current.overwriteFalse) {
-      // only include toggled keys when not overwriting false
-      return { ...current.attributes }
+      // only include toggled keys when not overwriting false, policy enforced
+      return applyNewsletterPolicy(productGrants, { ...current.attributes })
     }
     // include ALL newsletter keys to explicitly set false for unchecked
     const full: Record<string, boolean> = {}
     NEWSLETTER_KEYS.forEach((slug) => {
       full[slug] = current.attributes[slug] || false
     })
-    return full
+    return applyNewsletterPolicy(productGrants, full)
   }
 
   const saveCurrent = async () => {
@@ -216,7 +229,7 @@ export default function TemplateBuilderPage() {
     }
 
     try {
-      await apiSaveTpl(payload, exists)
+  await apiSaveTpl(kind, payload, exists)
       setTemplates((prev) =>
         [...prev.filter((t) => t.name !== payload.name), payload].sort((a, b) =>
           a.name.localeCompare(b.name)
@@ -234,7 +247,7 @@ export default function TemplateBuilderPage() {
   const deleteTpl = async (name: string) => {
     setErr("")
     try {
-      await apiDeleteTpl(name)
+      await apiDeleteTpl(kind, name)
       setTemplates((p) => p.filter((t) => t.name !== name))
     } catch (e: any) {
       setErr(e?.message || "Delete failed")
@@ -267,11 +280,16 @@ export default function TemplateBuilderPage() {
     [groupsToRender]
   )
 
+  const disabledSlugSet = useMemo(() => computeDisabledNewsletterSlugs(productGrants), [productGrants])
+
   const setAllVisible = (value: boolean) => {
     if (visibleSlugs.length === 0) return
     setCurrent((prev) => {
       const patch: Record<string, boolean> = {}
-      visibleSlugs.forEach((slug) => (patch[slug] = value))
+      visibleSlugs.forEach((slug) => {
+        if (disabledSlugSet.has(slug)) return
+        patch[slug] = value
+      })
       return { ...prev, attributes: { ...prev.attributes, ...patch } }
     })
   }
@@ -291,7 +309,7 @@ export default function TemplateBuilderPage() {
 
         <CardContent>
           {/* Product templates availability */}
-          {productGrants && (productGrants.radar || productGrants.compass || productGrants.scholar) && (
+          {productGrants && (productGrants.radar || productGrants.compass || productGrants.scholar || (productGrants as any).mylaw) && (
             <Alert className="mb-4 rounded-none border border-line bg-[hsl(var(--muted))]">
               <AlertDescription className="text-ink">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -304,6 +322,9 @@ export default function TemplateBuilderPage() {
                   )}
                   {productGrants.scholar && (
                     <Badge variant="outline" className="rounded-none border-line text-ink">Scholar</Badge>
+                  )}
+                  {(productGrants as any).mylaw && (
+                    <Badge variant="outline" className="rounded-none border-line text-ink">MyLaw</Badge>
                   )}
                 </div>
               </AlertDescription>
@@ -321,6 +342,20 @@ export default function TemplateBuilderPage() {
           )}
 
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+            {/* Kind chooser */}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-[hsl(var(--muted-foreground))]">Type:</span>
+              {(["newsletter", "radar", "compass", "scholar", "mylaw"] as Kind[]).map((k) => {
+                const disabled = k !== "newsletter" && !(productGrants as any)?.[k]
+                return (
+                  <Button key={k} size="sm" variant={kind === k ? "default" : "outline"} disabled={disabled}
+                    onClick={() => { setKind(k); setCurrent(emptyTpl()); setIsEditing(false); setQuery("") }}
+                    className="rounded-none">
+                    {k.charAt(0).toUpperCase() + k.slice(1)}
+                  </Button>
+                )
+              })}
+            </div>
             <TabsList className="grid grid-cols-2 rounded-none border-b border-line bg-transparent p-0">
               <TabsTrigger value="create" className="rounded-none">
                 {isEditing ? "Edit" : "Create"}
@@ -360,7 +395,8 @@ export default function TemplateBuilderPage() {
                 </div>
               </div>
 
-              {/* overwrite toggle */}
+              {/* overwrite toggle (newsletter only) */}
+              {kind === "newsletter" && (
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -380,8 +416,10 @@ export default function TemplateBuilderPage() {
                   {attrCount} attributes selected
                 </Badge>
               </div>
+              )}
 
-              {/* Filter + bulk actions for visible */}
+              {/* Filter + bulk actions for visible (newsletter only) */}
+              {kind === "newsletter" && (
               <div className="flex items-center gap-2">
                 <Input
                   value={query}
@@ -410,9 +448,10 @@ export default function TemplateBuilderPage() {
                   Clear
                 </Button>
               </div>
+              )}
 
               {/* Grouped newsletter checkboxes */}
-              {groupsToRender.length === 0 ? (
+              {kind === "newsletter" && (groupsToRender.length === 0 ? (
                 <div className="text-sm text-[hsl(var(--muted-foreground))]">
                   No newsletter fields matched your filter.
                 </div>
@@ -422,26 +461,56 @@ export default function TemplateBuilderPage() {
                     <div key={group.name}>
                       <div className="mb-2 font-semibold text-ink">{group.name}</div>
                       <div className="grid gap-3 rounded-none border border-line bg-paper p-4 sm:grid-cols-2 md:grid-cols-3">
-                        {group.slugs.map((slug) => (
-                          <div key={slug} className="flex items-center space-x-2">
-                            <Checkbox
-                              checked={attrChecked(slug)}
-                              onCheckedChange={(v) =>
-                                setCurrent((p) => ({
-                                  ...p,
-                                  attributes: { ...p.attributes, [slug]: v === true },
-                                }))
-                              }
-                              className="rounded-none"
-                            />
-                            <Label className="cursor-pointer capitalize text-[hsl(var(--muted-foreground))]">
-                              {slug.replace(/-/g, " ")}
-                            </Label>
-                          </div>
-                        ))}
+                        {group.slugs.map((slug) => {
+                          const disabled = disabledSlugSet.has(slug)
+                          return (
+                            <div key={slug} className="flex items-center space-x-2 opacity-100">
+                              <Checkbox
+                                checked={attrChecked(slug)}
+                                onCheckedChange={(v) =>
+                                  setCurrent((p) => ({
+                                    ...p,
+                                    attributes: { ...p.attributes, [slug]: v === true },
+                                  }))
+                                }
+                                disabled={disabled}
+                                className="rounded-none"
+                              />
+                              <Label
+                                className={`cursor-pointer capitalize ${disabled ? "text-[hsl(var(--muted-foreground))]/60" : "text-[hsl(var(--muted-foreground))]"}`}
+                                title={disabled ? "Managed by product access" : slug.replace(/-/g, " ")}
+                              >
+                                {slug.replace(/-/g, " ")}
+                                {disabled && (
+                                  <span className="ml-2 rounded-none border border-line bg-[hsl(var(--muted))]/40 px-1 py-0.5 text-[10px] uppercase tracking-wide text-ink">locked</span>
+                                )}
+                              </Label>
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   ))}
+                </div>
+              ))}
+
+              {/* Product JSON editor */}
+              {kind !== "newsletter" && (
+                <div className="space-y-2">
+                  <Label className="text-[hsl(var(--muted-foreground))]">Attributes JSON</Label>
+                  <textarea
+                    value={JSON.stringify(current.attributes || {}, null, 2)}
+                    onChange={(e) => {
+                      try {
+                        const val = JSON.parse(e.target.value || "{}")
+                        setCurrent((p) => ({ ...p, attributes: val }))
+                        setErr("")
+                      } catch {
+                        setErr("Invalid JSON")
+                      }
+                    }}
+                    className="min-h-[280px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
+                  />
                 </div>
               )}
 
@@ -468,7 +537,7 @@ export default function TemplateBuilderPage() {
 
             {/* ---------- MANAGE ---------- */}
             <TabsContent value="manage" className="mt-6 space-y-4">
-              <DefaultTemplatesSection />
+              {kind === "newsletter" && <DefaultTemplatesSection />}
 
               {templates.length === 0 && (
                 <Alert className="rounded-none border border-line bg-[hsl(var(--muted))]">

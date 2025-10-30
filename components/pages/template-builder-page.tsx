@@ -124,6 +124,10 @@ export default function TemplateBuilderPage() {
   const [query, setQuery] = useState("") // filter query
   const [err, setErr] = useState<string>("")
 
+  // Product-template gating (Radar / Compass / Scholar)
+  const [productGrants, setProductGrants] = useState<{ radar: boolean; compass: boolean; scholar: boolean } | null>(null)
+  const [productGrantError, setProductGrantError] = useState<string>("")
+
   const accId = getActiveAccountId()
 
   useEffect(() => {
@@ -156,6 +160,29 @@ export default function TemplateBuilderPage() {
     return () => {
       cancelled = true
     }
+  }, [accId])
+
+  // load product-template gating flags once per account
+  useEffect(() => {
+    let alive = true
+    setProductGrantError("")
+    setProductGrants(null)
+    if (!accId) return
+    ;(async () => {
+      try {
+        const res = await fetch("/api/templates/products/grants", { cache: "no-store", headers: { Accept: "application/json" } })
+        if (!res.ok) throw new Error(await res.text())
+        const payload = await res.json().catch(() => ({}))
+        if (!alive) return
+        const g = payload?.grants || {}
+        setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar })
+      } catch (e: any) {
+        if (!alive) return
+        setProductGrantError(e?.message || "Failed to check product access")
+        setProductGrants({ radar: false, compass: false, scholar: false })
+      }
+    })()
+    return () => { alive = false }
   }, [accId])
 
   const buildAttributePayload = (): Record<string, boolean> => {
@@ -263,6 +290,30 @@ export default function TemplateBuilderPage() {
         </CardHeader>
 
         <CardContent>
+          {/* Product templates availability */}
+          {productGrants && (productGrants.radar || productGrants.compass || productGrants.scholar) && (
+            <Alert className="mb-4 rounded-none border border-line bg-[hsl(var(--muted))]">
+              <AlertDescription className="text-ink">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span>Product templates available:</span>
+                  {productGrants.radar && (
+                    <Badge variant="outline" className="rounded-none border-line text-ink">Radar</Badge>
+                  )}
+                  {productGrants.compass && (
+                    <Badge variant="outline" className="rounded-none border-line text-ink">Compass</Badge>
+                  )}
+                  {productGrants.scholar && (
+                    <Badge variant="outline" className="rounded-none border-line text-ink">Scholar</Badge>
+                  )}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+          {productGrantError && (
+            <Alert className="mb-4 rounded-none border border-line bg-[hsl(var(--muted))]">
+              <AlertDescription className="text-ink">{productGrantError}</AlertDescription>
+            </Alert>
+          )}
           {err && (
             <Alert className="mb-4 rounded-none border border-line bg-[hsl(var(--muted))]">
               <AlertDescription className="text-ink">{err}</AlertDescription>

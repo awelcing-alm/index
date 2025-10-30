@@ -17,12 +17,14 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import {
   Loader2, Users as UsersIcon, Save, AlertTriangle, Info,
+  Radar as RadarIcon, Compass as CompassIcon, GraduationCap,
 } from "lucide-react"
 
 import type { Group } from "@/lib/groups"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import NewsletterManagerModal from "@/components/newsletters/newsletter-manager-modal"
+import type { ProductKey } from "@/lib/product-templates"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -193,6 +195,14 @@ export function UserEditModal({
   // newsletters modal state (must be inside component)
   const [newsletterOpen, setNewsletterOpen] = useState(false)
 
+  // Extended Profile app availability + editor
+  const [appAvail, setAppAvail] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean }>({})
+  const [appErr, setAppErr] = useState<string | null>(null)
+  const [activeApp, setActiveApp] = useState<ProductKey | null>(null)
+  const [appLoading, setAppLoading] = useState(false)
+  const [appDraft, setAppDraft] = useState<string>("")
+  const [appSaveMsg, setAppSaveMsg] = useState<string | null>(null)
+
   const details = userDetails
 
   /* --- load templates list on open --- */
@@ -214,6 +224,28 @@ export function UserEditModal({
       }
     })()
   }, [isOpen])
+
+  // probe Extended Profile app availability when opening and user is loaded
+  useEffect(() => {
+    if (!isOpen || !details?.user_id) return
+    let alive = true
+    setAppErr(null)
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles`, { cache: "no-store" })
+        if (!res.ok) throw new Error(await res.text())
+        const payload = await res.json()
+        const a = payload?.availability || {}
+        if (!alive) return
+        setAppAvail({ radar: !!a.radar?.exists, compass: !!a.compass?.exists, scholar: !!a.scholar?.exists })
+      } catch (e: any) {
+        if (!alive) return
+        setAppErr(e?.message || "Failed to check app profiles")
+        setAppAvail({})
+      }
+    })()
+    return () => { alive = false }
+  }, [isOpen, details?.user_id])
 
   /* --- initialise form values from user --- */
   useEffect(() => {
@@ -341,6 +373,55 @@ export function UserEditModal({
     }
   }
 
+  // load a specific app profile
+  const loadAppProfile = async (key: ProductKey) => {
+    if (!details?.user_id) return
+    setActiveApp(key)
+    setAppLoading(true)
+    setAppSaveMsg(null)
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles/${key}`, { cache: "no-store" })
+      if (!res.ok) throw new Error(await res.text())
+      const payload = await res.json()
+      const data = payload?.data ?? null
+      const text = data ? JSON.stringify(data, null, 2) : "{}"
+      setAppDraft(text)
+    } catch (e: any) {
+      setAppDraft("{}")
+      setAppErr(e?.message || "Failed to load profile")
+    } finally {
+      setAppLoading(false)
+    }
+  }
+
+  const saveAppProfile = async () => {
+    if (!details?.user_id || !activeApp) return
+    setAppLoading(true)
+    setAppSaveMsg(null)
+    try {
+      let parsed: any = {}
+      try { parsed = appDraft ? JSON.parse(appDraft) : {} } catch {
+        setAppSaveMsg("Invalid JSON")
+        setAppLoading(false)
+        return
+      }
+      const res = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles/${activeApp}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setAppSaveMsg("Profile saved")
+      // refresh availability (profile now exists)
+      setAppAvail((p) => ({ ...p, [activeApp]: true }))
+    } catch (e: any) {
+      setAppSaveMsg(e?.message || "Failed to save")
+    } finally {
+      setAppLoading(false)
+      setTimeout(() => setAppSaveMsg(null), 2500)
+    }
+  }
+
   /* ---------------- render ------------------ */
   if (!isOpen) return null
 
@@ -360,6 +441,54 @@ export function UserEditModal({
             <CardTitle className="font-serif text-lg text-ink">Apply Group & Template</CardTitle>
           </CardHeader>
           <CardContent>
+            {/* Extended Profile apps row */}
+            <div className="mb-4 flex items-center gap-3">
+              <span className="text-sm text-[hsl(var(--muted-foreground))]">Profiles:</span>
+              <button
+                type="button"
+                onClick={() => loadAppProfile("radar")}
+                className={[
+                  "flex items-center gap-1 rounded-md border px-2 py-1",
+                  appAvail.radar ? "border-blue-500 ring-2 ring-blue-300 animate-pulse" : "border-line",
+                  "hover:bg-[hsl(var(--muted))]",
+                ].join(" ")}
+                title={appAvail.radar ? "Radar profile available" : "No Radar profile yet"}
+              >
+                <RadarIcon className="h-4 w-4 text-ink" />
+                <span className="text-sm">Radar</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => loadAppProfile("compass")}
+                className={[
+                  "flex items-center gap-1 rounded-md border px-2 py-1",
+                  appAvail.compass ? "border-green-600 ring-2 ring-green-300 animate-pulse" : "border-line",
+                  "hover:bg-[hsl(var(--muted))]",
+                ].join(" ")}
+                title={appAvail.compass ? "Compass profile available" : "No Compass profile yet"}
+              >
+                <CompassIcon className="h-4 w-4 text-ink" />
+                <span className="text-sm">Compass</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => loadAppProfile("scholar")}
+                className={[
+                  "flex items-center gap-1 rounded-md border px-2 py-1",
+                  appAvail.scholar ? "border-purple-600 ring-2 ring-purple-300 animate-pulse" : "border-line",
+                  "hover:bg-[hsl(var(--muted))]",
+                ].join(" ")}
+                title={appAvail.scholar ? "Scholar profile available" : "No Scholar profile yet"}
+              >
+                <GraduationCap className="h-4 w-4 text-ink" />
+                <span className="text-sm">Scholar</span>
+              </button>
+
+              {appErr && (
+                <span className="ml-2 text-xs text-[hsl(var(--destructive))]">{appErr}</span>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Group */}
               <div className="space-y-2">
@@ -418,6 +547,41 @@ export function UserEditModal({
             </div>
           </CardContent>
         </Card>
+
+        {/* When an app is selected, render its JSON editor */}
+        {activeApp && (
+          <Card className="mt-3 rounded-none border border-line bg-paper">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-serif text-lg text-ink capitalize">{activeApp} Profile</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                Edit the user’s Extended Profile document for this app.
+              </p>
+              {appLoading ? (
+                <div className="flex items-center gap-2 text-[hsl(var(--muted-foreground))]">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading profile…
+                </div>
+              ) : (
+                <>
+                  <textarea
+                    value={appDraft}
+                    onChange={(e) => setAppDraft(e.target.value)}
+                    className="min-h-[220px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    {appSaveMsg && (
+                      <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>
+                    )}
+                    <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90">
+                      <Save className="mr-2 h-4 w-4" /> Save Profile
+                    </Button>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* NEW: Opt-out + Newsletters row */}
         <div className="mt-3 flex items-center justify-between rounded-none border border-line bg-[hsl(var(--muted))]/20 px-4 py-3">

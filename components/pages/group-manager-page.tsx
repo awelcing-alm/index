@@ -344,10 +344,20 @@ export default function GroupManagerPage() {
       {/* Heading */}
       <div className="space-y-1">
         <nav className="text-sm text-muted-foreground">Dashboard › Groups</nav>
-        <h1 className="text-3xl font-bold tracking-tight">Groups</h1>
-        <p className="text-muted-foreground">
-          Create groups and manage templates, product grants, and demographics.
-        </p>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Groups</h1>
+            <p className="text-muted-foreground">
+              Create groups and manage templates, product grants, and demographics.
+            </p>
+          </div>
+          <a
+            href="/analytics/groups"
+            className="hidden rounded-none border border-line px-3 py-1 text-sm text-ink hover:bg-[hsl(var(--muted))] md:inline-block"
+          >
+            Open Group Usage
+          </a>
+        </div>
       </div>
 
       {/* Create */}

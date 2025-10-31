@@ -180,6 +180,7 @@ export default function UsersTable({
   // Extended Profile availability & filter (Radar/MyLaw/Compass/Scholar)
   const [profilesByUser, setProfilesByUser] = useState<Record<string, { radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>>({})
   const [profileFilter, setProfileFilter] = useState<{ radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>({})
+  const [productGrants, setProductGrants] = useState<{ radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean } | null>(null)
   // Last session column/filter and column visibility
   const [sessionsByUser, setSessionsByUser] = useState<Record<string, { lastSession?: string; count?: number }>>({})
   const [lastSessionFilter, setLastSessionFilter] = useState<string>("")
@@ -229,6 +230,23 @@ export default function UsersTable({
     () => Object.fromEntries(groups.map((g) => [slugify(g.name), g] as const)),
     [groups],
   )
+
+  // Load product grants once to decide which profile icons/filters to show
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const res = await fetch("/api/templates/products/grants", { cache: "no-store", headers: { Accept: "application/json" } })
+        const payload = await res.json().catch(() => ({}))
+        const g = payload?.grants || {}
+        if (!alive) return
+        setProductGrants({ radar: !!g.radar, mylaw: !!g.mylaw, compass: !!g.compass, scholar: !!g.scholar })
+      } catch {
+        if (alive) setProductGrants({ radar: false, mylaw: false, compass: false, scholar: false })
+      }
+    })()
+    return () => { alive = false }
+  }, [])
 
   /* ----------- MEMBERSHIP HYDRATION (GLOBAL) ----------- */
   const [membershipByUser, setMembershipByUser] = useState<Record<string, Membership>>({})
@@ -373,7 +391,8 @@ export default function UsersTable({
     ).toLowerCase()
     const name = `${fn} ${ln}`.trim()
     const textHit = email.includes(q) || name.includes(q)
-    const selected = Object.entries(profileFilter).filter(([, v]) => v)
+  const allowed = productGrants ? Object.entries(productGrants).filter(([, on]) => on).map(([k]) => k) : []
+  const selected = Object.entries(profileFilter).filter(([k, v]) => v && (!allowed.length || allowed.includes(k)))
     const flags = profilesByUser[row.original.user_id] || {}
     const hasAll = selected.every(([k]) => (flags as any)[k])
     // Last session filter
@@ -518,21 +537,30 @@ export default function UsersTable({
             "h-4 w-4",
             on ? "text-ink" : "text-[hsl(var(--muted-foreground))] opacity-50",
           ].join(" ")
+        const keys = (productGrants ? (Object.entries(productGrants).filter(([, on]) => on).map(([k]) => k)) : []) as (keyof typeof f)[]
         return (
           <div className="flex items-center gap-2">
             <span className="sr-only">Profiles</span>
-            <span title={f.radar ? "Radar profile available" : "No Radar profile"}>
-              <RadarIcon className={iconCls(f.radar)} />
-            </span>
-            <span title={f.mylaw ? "MyLaw profile available" : "No MyLaw profile"}>
-              <BookOpen className={iconCls(f.mylaw)} />
-            </span>
-            <span title={f.compass ? "Compass profile available" : "No Compass profile"}>
-              <CompassIcon className={iconCls(f.compass)} />
-            </span>
-            <span title={f.scholar ? "Scholar profile available" : "No Scholar profile"}>
-              <GraduationCap className={iconCls(f.scholar)} />
-            </span>
+            {keys.includes("radar" as any) && (
+              <span title={f.radar ? "Radar profile available" : "No Radar profile"}>
+                <RadarIcon className={iconCls(f.radar)} />
+              </span>
+            )}
+            {keys.includes("mylaw" as any) && (
+              <span title={f.mylaw ? "MyLaw profile available" : "No MyLaw profile"}>
+                <BookOpen className={iconCls(f.mylaw)} />
+              </span>
+            )}
+            {keys.includes("compass" as any) && (
+              <span title={f.compass ? "Compass profile available" : "No Compass profile"}>
+                <CompassIcon className={iconCls(f.compass)} />
+              </span>
+            )}
+            {keys.includes("scholar" as any) && (
+              <span title={f.scholar ? "Scholar profile available" : "No Scholar profile"}>
+                <GraduationCap className={iconCls(f.scholar)} />
+              </span>
+            )}
           </div>
         )
       },
@@ -828,7 +856,7 @@ export default function UsersTable({
       {/* Profile filters */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-xs text-[hsl(var(--muted-foreground))]">Profiles:</span>
-        {(["radar","mylaw","compass","scholar"] as const).map((k) => (
+        {((productGrants ? (Object.entries(productGrants).filter(([, on]) => on).map(([k]) => k)) : []) as (keyof typeof profileFilter)[]).map((k) => (
           <button
             key={k}
             type="button"

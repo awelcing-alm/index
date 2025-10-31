@@ -6,6 +6,7 @@ import { updateUserAttributesAction } from "@/lib/user-actions"
 import { NEWSLETTER_KEYS } from "@/lib/newsletters"
 import { upsertUserAppProfile } from "@/lib/extended-profile"
 import { PRODUCT_APP_IDS, type ProductKey } from "@/lib/product-templates"
+import { sanitizeMyLawProfile, sanitizeRadarProfile } from "@/lib/product-profiles"
 
 type SetMembershipInput = {
   accountId: string
@@ -175,7 +176,11 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                      AND name = ${tplName}
                    LIMIT 1;
                 `).rows[0]
-                const attributes = row?.attributes && typeof row.attributes === 'object' ? row.attributes : {}
+                let attributes: any = row?.attributes && typeof row.attributes === 'object' ? row.attributes : {}
+                try {
+                  if (key === 'mylaw') attributes = sanitizeMyLawProfile(attributes)
+                  else if (key === 'radar') attributes = sanitizeRadarProfile(attributes)
+                } catch {}
                 const appId = PRODUCT_APP_IDS[key]
                 // Upsert for each user (best-effort)
                 await Promise.all(

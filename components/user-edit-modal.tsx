@@ -28,8 +28,10 @@ import { updateUserAttributesAction } from "@/lib/user-actions"
 import NewsletterManagerModal from "@/components/newsletters/newsletter-manager-modal"
 import type { ProductKey } from "@/lib/product-templates"
 import { sanitizeMyLawProfile, describeMyLaw, sanitizeRadarProfile, describeRadar } from "@/lib/product-profiles"
+import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
 import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
 import React from "react"
+import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -736,8 +738,69 @@ export function UserEditModal({
                           return <div className="text-sm text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div>
                         }
                       })()}
-                    </div>
+                            </div>
                   )}
+                            {/* Recommended adders for consistency with Template Builder */}
+                            <div className="mt-4 space-y-3">
+                              <div>
+                                <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
+                                <div className="flex flex-wrap gap-2">
+                                  {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => (
+                                    <Button
+                                      key={t.name}
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="rounded-none border-line text-ink"
+                                      onClick={() => {
+                                        try {
+                                          const parsed = JSON.parse(appDraft || "{}")
+                                          const pref = parsed.preferences || { topics: [], regions: [] }
+                                          const list = Array.isArray(pref.topics) ? pref.topics : []
+                                          if (!list.find((x: any) => String(x?.name || "").toLowerCase() === t.name.toLowerCase())) {
+                                            list.push({ name: t.name })
+                                          }
+                                          const next = JSON.stringify({ preferences: { ...pref, topics: list } }, null, 2)
+                                          setAppDraft(next)
+                                        } catch {}
+                                      }}
+                                      title={`Add ${t.name}`}
+                                    >
+                                      + {t.name}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="mb-2 text-sm font-medium text-ink">Recommended Regions</div>
+                                <div className="flex flex-wrap gap-2">
+                                  {MYLAW_REGION_RECS.map((r) => (
+                                    <Button
+                                      key={r.name}
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="rounded-none border-line text-ink"
+                                      onClick={() => {
+                                        try {
+                                          const parsed = JSON.parse(appDraft || "{}")
+                                          const pref = parsed.preferences || { topics: [], regions: [] }
+                                          const list = Array.isArray(pref.regions) ? pref.regions : []
+                                          if (!list.find((x: any) => String(x?.name || "").toLowerCase() === r.name.toLowerCase())) {
+                                            list.push({ name: r.name })
+                                          }
+                                          const next = JSON.stringify({ preferences: { ...pref, regions: list } }, null, 2)
+                                          setAppDraft(next)
+                                        } catch {}
+                                      }}
+                                      title={`Add ${r.name}`}
+                                    >
+                                      + {r.name}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
 
                   {/* Structured editor */}
                   {(activeApp === "mylaw" || activeApp === "radar") && (
@@ -749,6 +812,33 @@ export function UserEditModal({
                       />
                     </div>
                   )}
+
+                  {/* Schema-driven editor for other products if schema present */}
+                  {activeApp !== "mylaw" && activeApp !== "radar" && (() => {
+                    try {
+                      const parsed = appDraft ? JSON.parse(appDraft) : {}
+                      const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields)
+                        ? parsed.schema.fields
+                        : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
+                      if (fields && fields.length) {
+                        const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : {}
+                        return (
+                          <div className="mt-3 rounded-none border border-line bg-paper p-3">
+                            <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
+                            <ProfileSchemaForm
+                              fields={fields}
+                              value={values}
+                              onChange={(next) => {
+                                const nextDoc = { ...parsed, schema: { fields }, values: next }
+                                setAppDraft(JSON.stringify(nextDoc, null, 2))
+                              }}
+                            />
+                          </div>
+                        )
+                      }
+                    } catch {}
+                    return null
+                  })()}
 
                   <textarea
                     value={appDraft}

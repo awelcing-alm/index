@@ -20,6 +20,7 @@ import { computeDisabledNewsletterSlugs, applyNewsletterPolicy } from "@/lib/pro
 import { getActiveAccountId } from "@/lib/account-store"
 import { DefaultTemplatesSection } from "@/components/pages/default-templates-section"
 import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
+import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
 
 /* ---------------- types ---------------- */
@@ -561,25 +562,53 @@ export default function TemplateBuilderPage() {
                 </div>
               )}
 
-              {/* Other product JSON editor (fallback) */}
-              {kind !== "newsletter" && kind !== "mylaw" && (
-                <div className="space-y-2">
-                  <Label className="text-[hsl(var(--muted-foreground))]">Attributes JSON</Label>
-                  <textarea
-                    value={JSON.stringify(current.attributes || {}, null, 2)}
-                    onChange={(e) => {
-                      try {
-                        const val = JSON.parse(e.target.value || "{}")
-                        setCurrent((p) => ({ ...p, attributes: val }))
-                        setErr("")
-                      } catch {
-                        setErr("Invalid JSON")
-                      }
-                    }}
-                    className="min-h-[280px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
-                  />
-                </div>
-              )}
+              {/* Other product editors: schema-driven form when schema is present; else JSON fallback */}
+              {kind !== "newsletter" && kind !== "mylaw" && (() => {
+                const attrs: any = current.attributes || {}
+                const fields: FieldSpec[] | undefined = Array.isArray(attrs?.schema?.fields)
+                  ? attrs.schema.fields as FieldSpec[]
+                  : (Array.isArray(attrs?.fields) ? (attrs.fields as FieldSpec[]) : undefined)
+                if (fields && fields.length) {
+                  const values: Record<string, any> = (attrs?.values && typeof attrs.values === "object")
+                    ? attrs.values as Record<string, any>
+                    : Object.fromEntries(fields.map((f) => [f.key, attrs?.[f.key]]))
+                  return (
+                    <div className="space-y-3">
+                      <div>
+                        <Label className="text-[hsl(var(--muted-foreground))]">Template Fields</Label>
+                      </div>
+                      <ProfileSchemaForm
+                        fields={fields}
+                        value={values}
+                        onChange={(next) => {
+                          setCurrent((p) => ({
+                            ...p,
+                            attributes: { ...attrs, schema: { fields }, values: next },
+                          }))
+                        }}
+                      />
+                    </div>
+                  )
+                }
+                return (
+                  <div className="space-y-2">
+                    <Label className="text-[hsl(var(--muted-foreground))]">Attributes JSON</Label>
+                    <textarea
+                      value={JSON.stringify(attrs, null, 2)}
+                      onChange={(e) => {
+                        try {
+                          const val = JSON.parse(e.target.value || "{}")
+                          setCurrent((p) => ({ ...p, attributes: val }))
+                          setErr("")
+                        } catch {
+                          setErr("Invalid JSON")
+                        }
+                      }}
+                      className="min-h-[280px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
+                    />
+                  </div>
+                )
+              })()}
 
               <div className="flex gap-3">
                 <Button

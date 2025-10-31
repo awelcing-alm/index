@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { productKeyFromString, PRODUCT_APP_IDS } from "@/lib/product-templates"
 import { getUserAppProfile, upsertUserAppProfile } from "@/lib/extended-profile"
+import { sanitizeMyLawProfile, sanitizeRadarProfile } from "@/lib/product-profiles"
 import { logServer } from "@/lib/logger"
 
 export const dynamic = "force-dynamic"
@@ -38,8 +39,15 @@ export async function PUT(
     const key = productKeyFromString(product)
     if (!userId || !key) return NextResponse.json({ ok: false, error: "Bad params" }, { status: 400 })
 
-  const appId = PRODUCT_APP_IDS[key]
-  const ok = await upsertUserAppProfile(userId, appId, payload)
+    // Normalize payloads by product so upstream receives stable shape
+    let normalized: any = payload || {}
+    try {
+      if (key === "mylaw") normalized = sanitizeMyLawProfile(payload)
+      else if (key === "radar") normalized = sanitizeRadarProfile(payload)
+    } catch {}
+
+    const appId = PRODUCT_APP_IDS[key]
+    const ok = await upsertUserAppProfile(userId, appId, normalized)
   try { logServer("profile_save", { userId, product: key, appId, ok }) } catch {}
     return NextResponse.json({ ok, appId })
   } catch (err: any) {

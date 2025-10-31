@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { productKeyFromString, PRODUCT_APP_IDS } from "@/lib/product-templates"
 import { getUserAppProfile, upsertUserAppProfile } from "@/lib/extended-profile"
+import { logServer } from "@/lib/logger"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -38,7 +39,8 @@ export async function PUT(
     if (!userId || !key) return NextResponse.json({ ok: false, error: "Bad params" }, { status: 400 })
 
   const appId = PRODUCT_APP_IDS[key]
-    const ok = await upsertUserAppProfile(userId, appId, payload)
+  const ok = await upsertUserAppProfile(userId, appId, payload)
+  try { logServer("profile_save", { userId, product: key, appId, ok }) } catch {}
     return NextResponse.json({ ok, appId })
   } catch (err: any) {
     return NextResponse.json({ ok: false, error: err?.message || "Failed" }, { status: 500 })

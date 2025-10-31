@@ -1,4 +1,4 @@
-import { LoginForm } from "@/components/login-form"
+import LoginForm from "@/components/login-form"
 import { getCurrentUser } from "@/lib/zephr-api"
 import { redirect } from "next/navigation"
 
@@ -6,11 +6,12 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-export default async function LoginPage({ searchParams }: { searchParams?: { error?: string } }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const user = await getCurrentUser()
   if (user) redirect("/")
 
-  const error = searchParams?.error || ""
+  const sp = await searchParams
+  const error = sp?.error || ""
 
   return (
     <div className="min-h-screen bg-paper">

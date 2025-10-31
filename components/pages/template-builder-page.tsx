@@ -19,6 +19,8 @@ import {
 import { computeDisabledNewsletterSlugs, applyNewsletterPolicy } from "@/lib/product-policy"
 import { getActiveAccountId } from "@/lib/account-store"
 import { DefaultTemplatesSection } from "@/components/pages/default-templates-section"
+import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
+import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
 
 /* ---------------- types ---------------- */
 type Kind = "newsletter" | "radar" | "compass" | "scholar" | "mylaw"
@@ -494,8 +496,73 @@ export default function TemplateBuilderPage() {
                 </div>
               ))}
 
-              {/* Product JSON editor */}
-              {kind !== "newsletter" && (
+              {/* MyLaw template builder (recommended chips + structured editor) */}
+              {kind === "mylaw" && (
+                <div className="space-y-4">
+                  {/* Recommended Topics */}
+                  <div>
+                    <div className="mb-2 font-semibold text-ink">Recommended Topics</div>
+                    <div className="flex flex-wrap gap-2">
+                      {MYLAW_TOPIC_RECS.slice(0, 40).map((t) => (
+                        <Button key={t.name} type="button" size="sm" variant="outline" className="rounded-none border-line text-ink"
+                          onClick={() => {
+                            try {
+                              const text = JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } })
+                              const parsed = JSON.parse(text)
+                              const arr = parsed.preferences.topics as any[]
+                              if (!arr.find((x) => (x.name || "").toLowerCase() === t.name.toLowerCase())) arr.push({ name: t.name })
+                              setCurrent((p) => ({ ...p, attributes: parsed }))
+                            } catch {}
+                          }}
+                          title={`Add ${t.name}`}
+                        >
+                          + {t.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Recommended Regions */}
+                  <div>
+                    <div className="mb-2 font-semibold text-ink">Recommended Regions</div>
+                    <div className="flex flex-wrap gap-2">
+                      {MYLAW_REGION_RECS.map((r) => (
+                        <Button key={r.name} type="button" size="sm" variant="outline" className="rounded-none border-line text-ink"
+                          onClick={() => {
+                            try {
+                              const text = JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } })
+                              const parsed = JSON.parse(text)
+                              const arr = parsed.preferences.regions as any[]
+                              if (!arr.find((x) => (x.name || "").toLowerCase() === r.name.toLowerCase())) arr.push({ name: r.name })
+                              setCurrent((p) => ({ ...p, attributes: parsed }))
+                            } catch {}
+                          }}
+                          title={`Add ${r.name}`}
+                        >
+                          + {r.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Structured preferences editor */}
+                  <div className="rounded-none border border-line bg-paper p-3">
+                    <div className="mb-2 text-sm text-[hsl(var(--muted-foreground))]">Edit preferences</div>
+                    <ProfilePreferencesEditor
+                      jsonText={JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } }, null, 2)}
+                      onJsonChange={(next) => {
+                        try {
+                          const parsed = JSON.parse(next)
+                          setCurrent((p) => ({ ...p, attributes: parsed }))
+                        } catch {}
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Other product JSON editor (fallback) */}
+              {kind !== "newsletter" && kind !== "mylaw" && (
                 <div className="space-y-2">
                   <Label className="text-[hsl(var(--muted-foreground))]">Attributes JSON</Label>
                   <textarea

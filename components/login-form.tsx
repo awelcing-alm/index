@@ -8,13 +8,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Mail, Lock } from "lucide-react"
-import { loginUser } from "@/lib/zephr-api"
 
-export function LoginForm() {
+export default function LoginForm({ initialError }: { initialError?: string }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState(initialError || "")
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -22,11 +21,16 @@ export function LoginForm() {
     setIsLoading(true)
     setError("")
     try {
-      const result = await loginUser(email.trim(), password)
-      if (result.success) {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      })
+      const result = await res.json().catch(() => ({ success: false, error: "Login failed" }))
+      if (res.ok && result?.success) {
         if (result.isAdmin) router.push("/")
         else setError("Access denied. Admin privileges required.")
-      } else setError(result.error || "Login failed")
+      } else setError(result?.error || `Login failed (${res.status})`)
     } catch {
       setError("An unexpected error occurred")
     } finally {
@@ -113,3 +117,6 @@ export function LoginForm() {
     </form>
   )
 }
+
+// Optional named export for convenience
+export { LoginForm }

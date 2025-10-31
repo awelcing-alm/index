@@ -37,3 +37,18 @@ export function logServer(event: string, meta?: Record<string, any>) {
     fs.appendFileSync(LOG_FILE, line + "\n")
   } catch {}
 }
+
+export function getRecentLogEvents(limit = 500): Array<Record<string, any>> {
+  try {
+    ensureLogDir()
+    const text = fs.readFileSync(LOG_FILE, "utf8")
+    const lines = text.trim().split(/\n+/).slice(-limit)
+    const events: any[] = []
+    for (const line of lines) {
+      try { events.push(JSON.parse(line)) } catch {}
+    }
+    return events
+  } catch {
+    return []
+  }
+}

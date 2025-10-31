@@ -60,7 +60,7 @@ import {
   Filter as FilterIcon,
   X,
 } from "lucide-react"
-import { Radar as RadarIcon, Compass as CompassIcon, GraduationCap, BookOpen } from "lucide-react"
+import { Radar as RadarIcon, Compass as CompassIcon, GraduationCap, BookOpen, Columns as ColumnsIcon } from "lucide-react"
 
 import { GroupIconInline } from "@/components/group-icon"
 
@@ -180,6 +180,10 @@ export default function UsersTable({
   // Extended Profile availability & filter (Radar/MyLaw/Compass/Scholar)
   const [profilesByUser, setProfilesByUser] = useState<Record<string, { radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>>({})
   const [profileFilter, setProfileFilter] = useState<{ radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>({})
+  // Last session column/filter and column visibility
+  const [sessionsByUser, setSessionsByUser] = useState<Record<string, { lastSession?: string; count?: number }>>({})
+  const [lastSessionFilter, setLastSessionFilter] = useState<string>("")
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({})
 
   /* template names (defaults + custom) */
   const [templateNames, setTemplateNames] = useState<string[]>([])
@@ -370,10 +374,20 @@ export default function UsersTable({
     const name = `${fn} ${ln}`.trim()
     const textHit = email.includes(q) || name.includes(q)
     const selected = Object.entries(profileFilter).filter(([, v]) => v)
-    if (!selected.length) return textHit
     const flags = profilesByUser[row.original.user_id] || {}
     const hasAll = selected.every(([k]) => (flags as any)[k])
-    return textHit && hasAll
+    // Last session filter
+    let within = true
+    if (lastSessionFilter) {
+      const iso = sessionsByUser[row.original.user_id]?.lastSession
+      if (!iso) within = false
+      else {
+        const days = Number(lastSessionFilter)
+        const t = Date.parse(iso)
+        within = !isNaN(t) && (Date.now() - t) <= days * 24 * 60 * 60 * 1000
+      }
+    }
+    return textHit && hasAll && within
   }
 
   const setAllOnPage = (checked: boolean, tbl: any) => {
@@ -519,6 +533,31 @@ export default function UsersTable({
       size: 120,
     }),
     col.display({
+      id: "lastSession",
+      header: () => <span className="text-ink">Last Session</span>,
+      cell: ({ row }) => {
+        const iso = sessionsByUser[row.original.user_id]?.lastSession
+        if (!iso) return <span className="text-[hsl(var(--muted-foreground))]">—</span>
+        const d = new Date(iso)
+        const diff = Date.now() - d.getTime()
+        const days = Math.floor(diff / (24 * 60 * 60 * 1000))
+        const label = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`
+        return <span className="text-ink">{label}</span>
+      },
+      enableColumnFilter: false,
+      size: 120,
+    }),
+    col.display({
+      id: "sessions",
+      header: () => <span className="text-ink">Sessions</span>,
+      cell: ({ row }) => {
+        const c = sessionsByUser[row.original.user_id]?.count
+        return <span className="text-ink">{typeof c === "number" ? c : "—"}</span>
+      },
+      enableColumnFilter: false,
+      size: 90,
+    }),
+    col.display({
       id: "edit",
       header: () => <span className="text-ink">Edit</span>,
       cell: ({ row }) => {
@@ -543,12 +582,13 @@ export default function UsersTable({
     columns,
     getRowId: (row) => row.user_id,
     enableRowSelection: true,
-    state: { rowSelection, pagination, globalFilter, columnFilters, sorting },
+    state: { rowSelection, pagination, globalFilter, columnFilters, sorting, columnVisibility },
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
     autoResetPageIndex: false,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -582,6 +622,20 @@ export default function UsersTable({
         const payload = await res.json().catch(() => null)
         const map = (payload && payload.availability) || {}
         setProfilesByUser((prev) => ({ ...prev, ...map }))
+      } catch {}
+    })()
+    ;(async () => {
+      if (!ids.length) return
+      try {
+        const qs = encodeURIComponent(ids.join(","))
+        const res = await fetch(`/api/users/sessions?user_ids=${qs}`, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        })
+        if (!res.ok) return
+        const payload = await res.json().catch(() => null)
+        const map = (payload && payload.sessions) || {}
+        setSessionsByUser((prev) => ({ ...prev, ...map }))
       } catch {}
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -887,6 +941,39 @@ export default function UsersTable({
             ))}
           </SelectContent>
         </Select>
+
+        {/* last session filter */}
+        <Select value={lastSessionFilter} onValueChange={setLastSessionFilter}>
+          <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
+            <SelectValue placeholder="Last session within…" />
+          </SelectTrigger>
+          <SelectContent className="max-h-64 overflow-y-auto rounded-none border border-line bg-paper">
+            <SelectItem value="" className="rounded-none">Any time</SelectItem>
+            <SelectItem value="7" className="rounded-none">Last 7 days</SelectItem>
+            <SelectItem value="30" className="rounded-none">Last 30 days</SelectItem>
+            <SelectItem value="90" className="rounded-none">Last 90 days</SelectItem>
+            <SelectItem value="180" className="rounded-none">Last 180 days</SelectItem>
+            <SelectItem value="365" className="rounded-none">Last 365 days</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* column visibility quick toggle */}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            const toggles = ["lastSession", "profiles"] as const
+            setColumnVisibility((prev) => {
+              const next = { ...prev }
+              for (const id of toggles) next[id] = !(prev?.[id] ?? true)
+              return next
+            })
+          }}
+          className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+          title="Toggle columns (Last Session, Profiles)"
+        >
+          <ColumnsIcon className="mr-1 h-4 w-4" /> Columns
+        </Button>
 
         <Button
           size="sm"

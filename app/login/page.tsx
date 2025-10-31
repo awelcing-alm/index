@@ -1,17 +1,18 @@
-import LoginForm from "@/components/login-form"
+import { LoginForm } from "@/components/login-form"
 import { getCurrentUser } from "@/lib/zephr-api"
 import { redirect } from "next/navigation"
+import { submitLogin } from "./actions"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams?: Promise<{ error?: string }> }) {
   const user = await getCurrentUser()
   if (user) redirect("/")
 
-  const sp = await searchParams
-  const error = sp?.error || ""
+  const sp = (searchParams ? await searchParams : undefined) || {}
+  const error = (sp as any)?.error || ""
 
   return (
     <div className="min-h-screen bg-paper">
@@ -40,7 +41,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               </p>
             </div>
 
-            <LoginForm initialError={error} />
+            <LoginForm initialError={error} action={submitLogin} />
 
           </div>
 

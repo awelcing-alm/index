@@ -1,48 +1,23 @@
 "use client"
 
-import type React from "react"
 import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Mail, Lock } from "lucide-react"
+import { Mail, Lock } from "lucide-react"
+import { SubmitButton } from "@/components/submit-button"
 
-export default function LoginForm({ initialError }: { initialError?: string }) {
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState(initialError || "")
-  const router = useRouter()
+type LoginFormProps = {
+  initialError?: string
+  action: (formData: FormData) => void | Promise<void>
+}
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    setError("")
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
-      })
-      const result = await res.json().catch(() => ({ success: false, error: "Login failed" }))
-      if (res.ok && result?.success) {
-        if (result.isAdmin) router.push("/")
-        else setError("Access denied. Admin privileges required.")
-      } else setError(result?.error || `Login failed (${res.status})`)
-    } catch {
-      setError("An unexpected error occurred")
-    } finally {
-      setIsLoading(false)
-    }
-  }
+export default function LoginForm({ initialError, action }: LoginFormProps) {
+  // Local error display derived from server redirect param
+  const [error] = useState(initialError || "")
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="mx-auto w-full max-w-sm space-y-6 rounded-none border border-line bg-paper p-6"
-    >
+    <form action={action} className="mx-auto w-full max-w-sm space-y-6 rounded-none border border-line bg-paper p-6">
 
       {error && (
         <Alert className="rounded-none border border-[hsl(var(--destructive))] bg-[hsl(var(--destructive))]/10">
@@ -53,7 +28,7 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
       )}
 
       <div className="space-y-2">
-<Label htmlFor="email" className="text-gray-800 dark:text-white">
+        <Label htmlFor="email" className="text-gray-800 dark:text-white">
           Email
         </Label>
         <div className="relative">
@@ -64,8 +39,7 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
           <Input
             id="email"
             type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            name="email"
             placeholder="you@company.com"
             className="rounded-none border border-line bg-paper pl-10 text-ink placeholder:text-[hsl(var(--muted-foreground))] focus:border-ink focus:ring-0"
             required
@@ -86,8 +60,7 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
           <Input
             id="password"
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            name="password"
             placeholder="••••••••"
             className="rounded-none border border-line bg-paper pl-10 text-ink placeholder:text-[hsl(var(--muted-foreground))] focus:border-ink focus:ring-0"
             required
@@ -96,20 +69,7 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
         </div>
       </div>
 
-      <Button
-        type="submit"
-        disabled={isLoading}
-        className="w-full rounded-none bg-ink text-paper hover:bg-ink/90 disabled:opacity-60"
-      >
-        {isLoading ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Signing in…
-          </>
-        ) : (
-          "Sign In"
-        )}
-      </Button>
+      <SubmitButton />
 
       <p className="text-center text-xs text-[hsl(var(--muted-foreground))]">
         Administrator access required

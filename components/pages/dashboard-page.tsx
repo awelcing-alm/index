@@ -306,7 +306,7 @@ export async function DashboardPage() {
       {/* main content grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* usage summary */}
-        <UsageSummaryCard users={users} groups={productsError ? [] : products} groupsList={groupsList} />
+        <UsageSummaryCard users={users} groupsList={groupsList} />
   {/* products overview list (first 5) */}
         <Card className="rounded-none border border-line bg-paper">
           <CardHeader>

@@ -497,7 +497,7 @@ export async function DashboardPage() {
 }
 
 // Lightweight server component child for usage summary (fetches sessions via internal API)
-async function UsageSummaryCard({ users, groups, groupRows, groupsList }: { users: any[]; groups: any[]; groupRows?: any[]; groupsList?: any[] }) {
+async function UsageSummaryCard({ users, groupsList }: { users: any[]; groupsList?: any[] }) {
   // Compute active users (30d) via internal sessions API in chunks
   const CHUNK = 200
   let active30 = 0
@@ -506,7 +506,7 @@ async function UsageSummaryCard({ users, groups, groupRows, groupsList }: { user
       const ids = users.slice(i, i + CHUNK).map((u: any) => u.user_id)
       if (!ids.length) continue
       const qs = encodeURIComponent(ids.join(","))
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/users/sessions?user_ids=${qs}`, { cache: "no-store" })
+  const res = await fetch(`/api/users/sessions?user_ids=${qs}`, { cache: "no-store" })
       const payload = await res.json().catch(() => null)
       const map = (payload && payload.sessions) || {}
       for (const id of Object.keys(map)) {

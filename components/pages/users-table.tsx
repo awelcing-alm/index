@@ -521,10 +521,18 @@ export default function UsersTable({
         return (
           <div className="flex items-center gap-2">
             <span className="sr-only">Profiles</span>
-            <RadarIcon className={iconCls(f.radar)} />
-            <BookOpen className={iconCls(f.mylaw)} />
-            <CompassIcon className={iconCls(f.compass)} />
-            <GraduationCap className={iconCls(f.scholar)} />
+            <span title={f.radar ? "Radar profile available" : "No Radar profile"}>
+              <RadarIcon className={iconCls(f.radar)} />
+            </span>
+            <span title={f.mylaw ? "MyLaw profile available" : "No MyLaw profile"}>
+              <BookOpen className={iconCls(f.mylaw)} />
+            </span>
+            <span title={f.compass ? "Compass profile available" : "No Compass profile"}>
+              <CompassIcon className={iconCls(f.compass)} />
+            </span>
+            <span title={f.scholar ? "Scholar profile available" : "No Scholar profile"}>
+              <GraduationCap className={iconCls(f.scholar)} />
+            </span>
           </div>
         )
       },

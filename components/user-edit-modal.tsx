@@ -421,6 +421,14 @@ export function UserEditModal({
       setAppSaveMsg("Profile saved")
       // refresh availability (profile now exists)
       setAppAvail((p) => ({ ...p, [activeApp]: true }))
+      // reload profile to reflect server-side normalization
+      try {
+        const re = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles/${activeApp}`, { cache: "no-store" })
+        const payload = await re.json().catch(() => null)
+        const data = payload?.data ?? null
+        const text = data ? JSON.stringify(data, null, 2) : "{}"
+        setAppDraft(text)
+      } catch {}
     } catch (e: any) {
       setAppSaveMsg(e?.message || "Failed to save")
     } finally {

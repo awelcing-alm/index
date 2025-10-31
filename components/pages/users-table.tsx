@@ -943,12 +943,15 @@ export default function UsersTable({
         </Select>
 
         {/* last session filter */}
-        <Select value={lastSessionFilter} onValueChange={setLastSessionFilter}>
+        <Select
+          value={lastSessionFilter || "any"}
+          onValueChange={(v) => setLastSessionFilter(v === "any" ? "" : v)}
+        >
           <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
             <SelectValue placeholder="Last session within…" />
           </SelectTrigger>
           <SelectContent className="max-h-64 overflow-y-auto rounded-none border border-line bg-paper">
-            <SelectItem value="" className="rounded-none">Any time</SelectItem>
+            <SelectItem value="any" className="rounded-none">Any time</SelectItem>
             <SelectItem value="7" className="rounded-none">Last 7 days</SelectItem>
             <SelectItem value="30" className="rounded-none">Last 30 days</SelectItem>
             <SelectItem value="90" className="rounded-none">Last 90 days</SelectItem>

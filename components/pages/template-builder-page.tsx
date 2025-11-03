@@ -35,6 +35,7 @@ interface Template {
   createdAt: string
   updatedAt?: string
 }
+              
 
 /* ---------------- helpers (API) ---------------- */
 
@@ -189,6 +190,16 @@ export default function TemplateBuilderPage() {
       cancelled = true
     }
   }, [accId, kind])
+
+  // Seed product schema wrapper when switching to product kinds
+  useEffect(() => {
+    if (kind === "newsletter" || kind === "mylaw") return
+    const schema = PRODUCT_SCHEMAS[kind as keyof typeof PRODUCT_SCHEMAS]?.schema
+    if (schema && (!current.attributes || !("schema" in (current.attributes as any)))) {
+      setCurrent((p) => ({ ...p, attributes: { schema, values: {} as any } }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind])
 
   // load product-template gating flags once per account
   useEffect(() => {
@@ -516,47 +527,71 @@ export default function TemplateBuilderPage() {
                 <div className="space-y-4">
                   {/* Recommended Topics */}
                   <div>
-                    <div className="mb-2 font-semibold text-ink">Recommended Topics</div>
+                    {(() => {
+                      const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                      const topics: any[] = Array.isArray(prefs.topics) ? prefs.topics : []
+                      return (
+                        <div className="mb-2 flex items-center gap-2">
+                          <div className="font-semibold text-ink">Recommended Topics</div>
+                          <Badge variant="outline" className="rounded-none border-line text-xs text-ink">Selected: {topics.length}</Badge>
+                        </div>
+                      )
+                    })()}
                     <div className="flex flex-wrap gap-2">
-                      {MYLAW_TOPIC_RECS.slice(0, 40).map((t) => (
-                        <Button key={t.name} type="button" size="sm" variant="outline" className="rounded-none border-line text-ink"
-                          onClick={() => {
+                      {MYLAW_TOPIC_RECS.slice(0, 40).map((t) => {
+                        const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                        const arr: any[] = Array.isArray(prefs.topics) ? prefs.topics : []
+                        const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === t.name.toLowerCase())
+                        const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                        return (
+                          <button key={t.name} type="button" onClick={() => {
                             try {
-                              const text = JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } })
-                              const parsed = JSON.parse(text)
-                              const arr = parsed.preferences.topics as any[]
-                              if (!arr.find((x) => (x.name || "").toLowerCase() === t.name.toLowerCase())) arr.push({ name: t.name })
-                              setCurrent((p) => ({ ...p, attributes: parsed }))
+                              const next = { preferences: { ...(current.attributes?.preferences || { topics: [], regions: [] }) } }
+                              const list: any[] = Array.isArray(next.preferences.topics) ? next.preferences.topics : []
+                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === t.name.toLowerCase())
+                              if (idx >= 0) list.splice(idx, 1)
+                              else list.push({ name: t.name })
+                              next.preferences.topics = list
+                              setCurrent((p) => ({ ...p, attributes: next }))
                             } catch {}
-                          }}
-                          title={`Add ${t.name}`}
-                        >
-                          + {t.name}
-                        </Button>
-                      ))}
+                          }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")} title={`Toggle ${t.name}`}>{selected ? "✓ " : "+ "}{t.name}</button>
+                        )
+                      })}
                     </div>
                   </div>
 
                   {/* Recommended Regions */}
                   <div>
-                    <div className="mb-2 font-semibold text-ink">Recommended Regions</div>
+                    {(() => {
+                      const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                      const regions: any[] = Array.isArray(prefs.regions) ? prefs.regions : []
+                      return (
+                        <div className="mb-2 flex items-center gap-2">
+                          <div className="font-semibold text-ink">Recommended Regions</div>
+                          <Badge variant="outline" className="rounded-none border-line text-xs text-ink">Selected: {regions.length}</Badge>
+                        </div>
+                      )
+                    })()}
                     <div className="flex flex-wrap gap-2">
-                      {MYLAW_REGION_RECS.map((r) => (
-                        <Button key={r.name} type="button" size="sm" variant="outline" className="rounded-none border-line text-ink"
-                          onClick={() => {
+                      {MYLAW_REGION_RECS.map((r) => {
+                        const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                        const arr: any[] = Array.isArray(prefs.regions) ? prefs.regions : []
+                        const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === r.name.toLowerCase())
+                        const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                        return (
+                          <button key={r.name} type="button" onClick={() => {
                             try {
-                              const text = JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } })
-                              const parsed = JSON.parse(text)
-                              const arr = parsed.preferences.regions as any[]
-                              if (!arr.find((x) => (x.name || "").toLowerCase() === r.name.toLowerCase())) arr.push({ name: r.name })
-                              setCurrent((p) => ({ ...p, attributes: parsed }))
+                              const next = { preferences: { ...(current.attributes?.preferences || { topics: [], regions: [] }) } }
+                              const list: any[] = Array.isArray(next.preferences.regions) ? next.preferences.regions : []
+                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === r.name.toLowerCase())
+                              if (idx >= 0) list.splice(idx, 1)
+                              else list.push({ name: r.name })
+                              next.preferences.regions = list
+                              setCurrent((p) => ({ ...p, attributes: next }))
                             } catch {}
-                          }}
-                          title={`Add ${r.name}`}
-                        >
-                          + {r.name}
-                        </Button>
-                      ))}
+                          }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")} title={`Toggle ${r.name}`}>{selected ? "✓ " : "+ "}{r.name}</button>
+                        )
+                      })}
                     </div>
                   </div>
 

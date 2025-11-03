@@ -240,9 +240,10 @@ export default function UsersTable({
         const payload = await res.json().catch(() => ({}))
         const g = payload?.grants || {}
         if (!alive) return
-        setProductGrants({ radar: !!g.radar, mylaw: !!g.mylaw, compass: !!g.compass, scholar: !!g.scholar })
+        // MyLaw is available for all users; force-enable in UI
+        setProductGrants({ radar: !!g.radar, mylaw: true, compass: !!g.compass, scholar: !!g.scholar })
       } catch {
-        if (alive) setProductGrants({ radar: false, mylaw: false, compass: false, scholar: false })
+        if (alive) setProductGrants({ radar: false, mylaw: true, compass: false, scholar: false })
       }
     })()
     return () => { alive = false }
@@ -369,6 +370,22 @@ export default function UsersTable({
     } catch (e) {
       console.error("refreshMemberships failed", e)
     }
+  }, [])
+
+  // Explicitly re-probe Extended Profile availability for a list of users
+  const reprobeProfiles = useCallback(async (userIds: string[]) => {
+    if (!userIds.length) return
+    try {
+      const qs = encodeURIComponent(userIds.join(","))
+      const res = await fetch(`/api/users/extended-profiles/availability?user_ids=${qs}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      })
+      if (!res.ok) return
+      const payload = await res.json().catch(() => null)
+      const map = (payload && payload.availability) || {}
+      setProfilesByUser((prev) => ({ ...prev, ...map }))
+    } catch {}
   }, [])
 
   /* ================== table ================== */
@@ -777,6 +794,7 @@ export default function UsersTable({
       const ids = table.getRowModel().rows.map((r) => r.original.user_id)
       lastMembershipKey.current = ""
       await refreshMemberships(ids)
+  await reprobeProfiles(ids)
 
       table.resetRowSelection()
     } catch (e: any) {

@@ -184,7 +184,16 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                 const appId = PRODUCT_APP_IDS[key]
                 // Upsert for each user (best-effort)
                 await Promise.all(
-                  targetUserIds.map((uid) => upsertUserAppProfile(uid, appId, attributes).catch(() => false))
+                  targetUserIds.map(async (uid) => {
+                    try {
+                      const ok = await upsertUserAppProfile(uid, appId, attributes)
+                      if (!ok) console.error("Extended profile upsert returned false", { uid, key, appId })
+                      return ok
+                    } catch (err) {
+                      console.error("Extended profile upsert failed", { uid, key, appId, err })
+                      return false
+                    }
+                  })
                 )
               }
             }

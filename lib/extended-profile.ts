@@ -84,26 +84,45 @@ export async function getUserAppProfile(userId: string, appId: string): Promise<
 }
 
 export async function upsertUserAppProfile(userId: string, appId: string, profile: any): Promise<boolean> {
-  const bodies = [JSON.stringify(profile)]
-  const endpoints = [
-    `/v3/users/${encodeURIComponent(userId)}/applications/${encodeURIComponent(appId)}/profile`,
-    `/v3/users/${encodeURIComponent(userId)}/extended-profiles/${encodeURIComponent(appId)}`,
+  const stringBodies = [
+    JSON.stringify(profile),
+    JSON.stringify({ data: profile }),
+    JSON.stringify({ profile }),
   ]
+
+  const base = `/v3/users/${encodeURIComponent(userId)}`
+  const endpoints = [
+    `${base}/applications/${encodeURIComponent(appId)}/profile`,
+    `${base}/applications/${encodeURIComponent(appId)}`,
+    `${base}/extended-profiles/${encodeURIComponent(appId)}`,
+    `${base}/apps/${encodeURIComponent(appId)}/profile`,
+  ]
+
+  // Try PUT across endpoints and body shapes
   for (const path of endpoints) {
-    try {
-      await adminApiCall(path, { method: "PUT", body: bodies[0] })
-      return true
-    } catch (e) {
-      // continue to next
+    for (const body of stringBodies) {
+      try {
+        await adminApiCall(path, { method: "PUT", body })
+        logServer("upsertUserAppProfile_ok", { path, userId, appId })
+        return true
+      } catch (e: any) {
+        logServer("upsertUserAppProfile_try_put_fail", { path, userId, appId, error: e?.message })
+      }
     }
   }
-  // As a last resort, POST
+  // Fallback POST
   for (const path of endpoints) {
-    try {
-      await adminApiCall(path, { method: "POST", body: bodies[0] })
-      return true
-    } catch (e) {}
+    for (const body of stringBodies) {
+      try {
+        await adminApiCall(path, { method: "POST", body })
+        logServer("upsertUserAppProfile_ok_post", { path, userId, appId })
+        return true
+      } catch (e: any) {
+        logServer("upsertUserAppProfile_try_post_fail", { path, userId, appId, error: e?.message })
+      }
+    }
   }
+  logServer("upsertUserAppProfile_all_failed", { userId, appId })
   return false
 }
 

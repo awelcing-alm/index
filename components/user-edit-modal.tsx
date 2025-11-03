@@ -212,6 +212,7 @@ export function UserEditModal({
   const [appSaveMsg, setAppSaveMsg] = useState<string | null>(null)
   const [productTpls, setProductTpls] = useState<{ radar: string[]; compass: string[]; scholar: string[]; mylaw: string[] }>({ radar: [], compass: [], scholar: [], mylaw: [] })
   const [grants, setGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
+  const [selectedProductTemplate, setSelectedProductTemplate] = useState<Partial<Record<ProductKey, string>>>({})
 
   const details = userDetails
 
@@ -446,13 +447,21 @@ export function UserEditModal({
       if (!res.ok) throw new Error(await res.text())
       const payload = await res.json().catch(() => null)
       let attrs = (payload && payload.attributes) || {}
-      // Ensure schema present for product; if not, attach canonical schema and wrap values
-      if (PRODUCT_SCHEMAS[product]) {
-        if (!(attrs && typeof attrs === 'object' && 'schema' in attrs)) {
-          attrs = { schema: PRODUCT_SCHEMAS[product].schema, values: attrs || {} }
+      // For MyLaw/Radar use raw values (or values within schema wrapper)
+      if (product === "mylaw" || product === "radar") {
+        if (attrs && typeof attrs === 'object' && (attrs as any).schema && (attrs as any).values) {
+          attrs = (attrs as any).values
         }
+        setAppDraft(JSON.stringify(attrs || {}, null, 2))
+      } else {
+        // Compass/Scholar: ensure { schema, values }
+        if (!(attrs && typeof attrs === 'object' && 'schema' in attrs)) {
+          const schema = PRODUCT_SCHEMAS[product]?.schema || { fields: [] }
+          attrs = { schema, values: attrs || {} }
+        }
+        setAppDraft(JSON.stringify(attrs, null, 2))
       }
-      setAppDraft(JSON.stringify(attrs, null, 2))
+      setSelectedProductTemplate((p) => ({ ...p, [product]: name }))
     } catch (e) {
       setAppSaveMsg((e as any)?.message || "Failed to load template")
       setTimeout(() => setAppSaveMsg(null), 2500)
@@ -609,8 +618,9 @@ export function UserEditModal({
                   {activeApp ? `Apply ${activeApp[0].toUpperCase() + activeApp.slice(1)} Template` : "Apply Newsletter Template"}
                 </Label>
                 {activeApp ? (
+                  <>
                   <Select
-                    value={""}
+                    value={selectedProductTemplate[activeApp] || ""}
                     onValueChange={(v) => applyProductTemplateToDraft(activeApp, v)}
                     disabled={!productTpls[activeApp]?.length}
                   >
@@ -625,6 +635,10 @@ export function UserEditModal({
                       ))}
                     </SelectContent>
                   </Select>
+                  {activeApp && selectedProductTemplate[activeApp] ? (
+                    <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate[activeApp]}</span> (unsaved)</div>
+                  ) : null}
+                  </>
                 ) : tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (

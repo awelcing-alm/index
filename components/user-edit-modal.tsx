@@ -32,6 +32,7 @@ import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
 import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
 import React from "react"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
+import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -444,7 +445,13 @@ export function UserEditModal({
       const res = await fetch(`/api/product-templates/${product}/${encodeURIComponent(name)}`, { cache: "no-store" })
       if (!res.ok) throw new Error(await res.text())
       const payload = await res.json().catch(() => null)
-      const attrs = (payload && payload.attributes) || {}
+      let attrs = (payload && payload.attributes) || {}
+      // Ensure schema present for product; if not, attach canonical schema and wrap values
+      if (PRODUCT_SCHEMAS[product]) {
+        if (!(attrs && typeof attrs === 'object' && 'schema' in attrs)) {
+          attrs = { schema: PRODUCT_SCHEMAS[product].schema, values: attrs || {} }
+        }
+      }
       setAppDraft(JSON.stringify(attrs, null, 2))
     } catch (e) {
       setAppSaveMsg((e as any)?.message || "Failed to load template")
@@ -894,15 +901,15 @@ export function UserEditModal({
                     </div>
                   )}
 
-                  {/* Schema-driven editor for other products if schema present */}
-                  {activeApp !== "mylaw" && activeApp !== "radar" && (() => {
+                  {/* Schema-driven editor for products when schema present */}
+                  {(() => {
                     try {
                       const parsed = appDraft ? JSON.parse(appDraft) : {}
                       const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields)
                         ? parsed.schema.fields
                         : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
                       if (fields && fields.length) {
-                        const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : {}
+                        const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
                         return (
                           <div className="mt-3 rounded-none border border-line bg-paper p-3">
                             <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
@@ -921,11 +928,6 @@ export function UserEditModal({
                     return null
                   })()}
 
-                  <textarea
-                    value={appDraft}
-                    onChange={(e) => setAppDraft(e.target.value)}
-                    className="min-h-[220px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
-                  />
                   <div className="flex items-center justify-end gap-2">
                     {appSaveMsg && (
                       <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>

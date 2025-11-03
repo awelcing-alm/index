@@ -562,7 +562,7 @@ export default function TemplateBuilderPage() {
                 </div>
               )}
 
-              {/* Other product editors: schema-driven form when schema is present; else JSON fallback */}
+              {/* Other product editors: schema-driven form when schema is present; no raw JSON UI */}
               {kind !== "newsletter" && kind !== "mylaw" && (() => {
                 const attrs: any = current.attributes || {}
                 const fields: FieldSpec[] | undefined = Array.isArray(attrs?.schema?.fields)
@@ -591,22 +591,11 @@ export default function TemplateBuilderPage() {
                   )
                 }
                 return (
-                  <div className="space-y-2">
-                    <Label className="text-[hsl(var(--muted-foreground))]">Attributes JSON</Label>
-                    <textarea
-                      value={JSON.stringify(attrs, null, 2)}
-                      onChange={(e) => {
-                        try {
-                          const val = JSON.parse(e.target.value || "{}")
-                          setCurrent((p) => ({ ...p, attributes: val }))
-                          setErr("")
-                        } catch {
-                          setErr("Invalid JSON")
-                        }
-                      }}
-                      className="min-h-[280px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
-                    />
-                  </div>
+                  <Alert className="rounded-none border border-line bg-[hsl(var(--muted))]">
+                    <AlertDescription className="text-ink">
+                      No schema defined for this product template yet.
+                    </AlertDescription>
+                  </Alert>
                 )
               })()}
 

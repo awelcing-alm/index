@@ -115,6 +115,7 @@ export default function GroupManagerPage() {
   const [templates, setTemplates] = useState<string[]>([])
   const [productTemplates, setProductTemplates] = useState<{ radar: string[]; compass: string[]; scholar: string[]; mylaw: string[] }>({ radar: [], compass: [], scholar: [], mylaw: [] })
   const [selectedProductTpls, setSelectedProductTpls] = useState<{ radar?: string; compass?: string; scholar?: string; mylaw?: string }>({})
+  const [grants, setGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean }>({})
 
   const [countryOpts, setCountryOpts] = useState<string[]>([])
   const [jobFunctionOpts, setJobFunctionOpts] = useState<string[]>([])
@@ -219,6 +220,23 @@ export default function GroupManagerPage() {
       } catch {
         if (!alive) return
         setProductTemplates({ radar: [], compass: [], scholar: [], mylaw: [] })
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  // fetch account product grants to gate template pickers (MyLaw always available)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const res = await fetch("/api/templates/products/grants", { cache: "no-store" })
+        const p = await res.json().catch(() => ({}))
+        if (!alive) return
+        const g = p?.grants || {}
+        setGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: true })
+      } catch {
+        if (!alive) setGrants({ radar: false, compass: false, scholar: false, mylaw: true })
       }
     })()
     return () => { alive = false }
@@ -424,6 +442,7 @@ export default function GroupManagerPage() {
                       className="w-full rounded-md border px-3 py-2 bg-white/5"
                       value={selectedProductTpls[k] || ""}
                       onChange={(e) => setSelectedProductTpls((p) => ({ ...p, [k]: e.target.value || undefined }))}
+                      disabled={k !== "mylaw" && !grants[k]}
                     >
                       <option value="">— None —</option>
                       {productTemplates[k].map((n) => (

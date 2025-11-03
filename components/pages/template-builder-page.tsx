@@ -20,6 +20,7 @@ import { computeDisabledNewsletterSlugs, applyNewsletterPolicy } from "@/lib/pro
 import { getActiveAccountId } from "@/lib/account-store"
 import { DefaultTemplatesSection } from "@/components/pages/default-templates-section"
 import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
+import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
 
@@ -34,6 +35,7 @@ interface Template {
   createdAt: string
   updatedAt?: string
 }
+              
 
 /* ---------------- helpers (API) ---------------- */
 
@@ -69,17 +71,29 @@ const apiGetTpl = async (kind: Kind, name: string): Promise<Template | null> => 
     if (!data || typeof data !== "object") return null
 
     const attrsRaw = (data as any).attributes || {}
-    const attrs: Record<string, boolean> = {}
-    for (const [k, v] of Object.entries(attrsRaw)) {
-      if (typeof v === "boolean") attrs[k] = v
-      else if (v === "true" || v === "false") attrs[k] = v === "true"
-      else if (v != null) attrs[k] = Boolean(v)
+    let attrs: any = {}
+    if (kind === "newsletter") {
+      const b: Record<string, boolean> = {}
+      for (const [k, v] of Object.entries(attrsRaw)) {
+        if (typeof v === "boolean") b[k] = v
+        else if (v === "true" || v === "false") b[k] = v === "true"
+        else if (v != null) b[k] = Boolean(v)
+      }
+      attrs = b
+    } else {
+      // Ensure product templates have a schema wrapper
+      if (attrsRaw && typeof attrsRaw === "object" && (attrsRaw as any).schema && Array.isArray((attrsRaw as any).schema.fields)) {
+        attrs = attrsRaw
+      } else {
+        const schema = PRODUCT_SCHEMAS[kind as keyof typeof PRODUCT_SCHEMAS]?.schema || { fields: [] }
+        attrs = { schema, values: attrsRaw || {} }
+      }
     }
 
     return {
       name: String((data as any).name ?? name),
       description: String((data as any).description ?? ""),
-      attributes: attrs,
+  attributes: attrs,
       overwriteFalse: (data as any).overwriteFalse === true,
       createdAt: String((data as any).createdAt ?? ""),
       updatedAt: (data as any).updatedAt ? String((data as any).updatedAt) : undefined,
@@ -177,6 +191,16 @@ export default function TemplateBuilderPage() {
     }
   }, [accId, kind])
 
+  // Seed product schema wrapper when switching to product kinds
+  useEffect(() => {
+    if (kind === "newsletter" || kind === "mylaw") return
+    const schema = PRODUCT_SCHEMAS[kind as keyof typeof PRODUCT_SCHEMAS]?.schema
+    if (schema && (!current.attributes || !("schema" in (current.attributes as any)))) {
+      setCurrent((p) => ({ ...p, attributes: { schema, values: {} as any } }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind])
+
   // load product-template gating flags once per account
   useEffect(() => {
     let alive = true
@@ -189,12 +213,13 @@ export default function TemplateBuilderPage() {
         if (!res.ok) throw new Error(await res.text())
         const payload = await res.json().catch(() => ({}))
         if (!alive) return
-  const g = payload?.grants || {}
-  setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: !!g.mylaw })
+        const g = payload?.grants || {}
+        // MyLaw is available for all users; force-enable in UI
+        setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: true })
       } catch (e: any) {
         if (!alive) return
         setProductGrantError(e?.message || "Failed to check product access")
-        setProductGrants({ radar: false, compass: false, scholar: false })
+        setProductGrants({ radar: false, compass: false, scholar: false, mylaw: true })
       }
     })()
     return () => { alive = false }
@@ -502,47 +527,71 @@ export default function TemplateBuilderPage() {
                 <div className="space-y-4">
                   {/* Recommended Topics */}
                   <div>
-                    <div className="mb-2 font-semibold text-ink">Recommended Topics</div>
+                    {(() => {
+                      const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                      const topics: any[] = Array.isArray(prefs.topics) ? prefs.topics : []
+                      return (
+                        <div className="mb-2 flex items-center gap-2">
+                          <div className="font-semibold text-ink">Recommended Topics</div>
+                          <Badge variant="outline" className="rounded-none border-line text-xs text-ink">Selected: {topics.length}</Badge>
+                        </div>
+                      )
+                    })()}
                     <div className="flex flex-wrap gap-2">
-                      {MYLAW_TOPIC_RECS.slice(0, 40).map((t) => (
-                        <Button key={t.name} type="button" size="sm" variant="outline" className="rounded-none border-line text-ink"
-                          onClick={() => {
+                      {MYLAW_TOPIC_RECS.slice(0, 40).map((t) => {
+                        const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                        const arr: any[] = Array.isArray(prefs.topics) ? prefs.topics : []
+                        const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === t.name.toLowerCase())
+                        const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                        return (
+                          <button key={t.name} type="button" onClick={() => {
                             try {
-                              const text = JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } })
-                              const parsed = JSON.parse(text)
-                              const arr = parsed.preferences.topics as any[]
-                              if (!arr.find((x) => (x.name || "").toLowerCase() === t.name.toLowerCase())) arr.push({ name: t.name })
-                              setCurrent((p) => ({ ...p, attributes: parsed }))
+                              const next = { preferences: { ...(current.attributes?.preferences || { topics: [], regions: [] }) } }
+                              const list: any[] = Array.isArray(next.preferences.topics) ? next.preferences.topics : []
+                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === t.name.toLowerCase())
+                              if (idx >= 0) list.splice(idx, 1)
+                              else list.push({ name: t.name })
+                              next.preferences.topics = list
+                              setCurrent((p) => ({ ...p, attributes: next }))
                             } catch {}
-                          }}
-                          title={`Add ${t.name}`}
-                        >
-                          + {t.name}
-                        </Button>
-                      ))}
+                          }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")} title={`Toggle ${t.name}`}>{selected ? "✓ " : "+ "}{t.name}</button>
+                        )
+                      })}
                     </div>
                   </div>
 
                   {/* Recommended Regions */}
                   <div>
-                    <div className="mb-2 font-semibold text-ink">Recommended Regions</div>
+                    {(() => {
+                      const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                      const regions: any[] = Array.isArray(prefs.regions) ? prefs.regions : []
+                      return (
+                        <div className="mb-2 flex items-center gap-2">
+                          <div className="font-semibold text-ink">Recommended Regions</div>
+                          <Badge variant="outline" className="rounded-none border-line text-xs text-ink">Selected: {regions.length}</Badge>
+                        </div>
+                      )
+                    })()}
                     <div className="flex flex-wrap gap-2">
-                      {MYLAW_REGION_RECS.map((r) => (
-                        <Button key={r.name} type="button" size="sm" variant="outline" className="rounded-none border-line text-ink"
-                          onClick={() => {
+                      {MYLAW_REGION_RECS.map((r) => {
+                        const prefs: any = current.attributes?.preferences || { topics: [], regions: [] }
+                        const arr: any[] = Array.isArray(prefs.regions) ? prefs.regions : []
+                        const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === r.name.toLowerCase())
+                        const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                        return (
+                          <button key={r.name} type="button" onClick={() => {
                             try {
-                              const text = JSON.stringify({ preferences: current.attributes?.preferences || { topics: [], regions: [] } })
-                              const parsed = JSON.parse(text)
-                              const arr = parsed.preferences.regions as any[]
-                              if (!arr.find((x) => (x.name || "").toLowerCase() === r.name.toLowerCase())) arr.push({ name: r.name })
-                              setCurrent((p) => ({ ...p, attributes: parsed }))
+                              const next = { preferences: { ...(current.attributes?.preferences || { topics: [], regions: [] }) } }
+                              const list: any[] = Array.isArray(next.preferences.regions) ? next.preferences.regions : []
+                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === r.name.toLowerCase())
+                              if (idx >= 0) list.splice(idx, 1)
+                              else list.push({ name: r.name })
+                              next.preferences.regions = list
+                              setCurrent((p) => ({ ...p, attributes: next }))
                             } catch {}
-                          }}
-                          title={`Add ${r.name}`}
-                        >
-                          + {r.name}
-                        </Button>
-                      ))}
+                          }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")} title={`Toggle ${r.name}`}>{selected ? "✓ " : "+ "}{r.name}</button>
+                        )
+                      })}
                     </div>
                   </div>
 
@@ -562,7 +611,7 @@ export default function TemplateBuilderPage() {
                 </div>
               )}
 
-              {/* Other product editors: schema-driven form when schema is present; else JSON fallback */}
+              {/* Other product editors: schema-driven form when schema is present; no raw JSON UI */}
               {kind !== "newsletter" && kind !== "mylaw" && (() => {
                 const attrs: any = current.attributes || {}
                 const fields: FieldSpec[] | undefined = Array.isArray(attrs?.schema?.fields)
@@ -591,22 +640,11 @@ export default function TemplateBuilderPage() {
                   )
                 }
                 return (
-                  <div className="space-y-2">
-                    <Label className="text-[hsl(var(--muted-foreground))]">Attributes JSON</Label>
-                    <textarea
-                      value={JSON.stringify(attrs, null, 2)}
-                      onChange={(e) => {
-                        try {
-                          const val = JSON.parse(e.target.value || "{}")
-                          setCurrent((p) => ({ ...p, attributes: val }))
-                          setErr("")
-                        } catch {
-                          setErr("Invalid JSON")
-                        }
-                      }}
-                      className="min-h-[280px] w-full rounded-none border border-line bg-paper p-2 font-mono text-sm text-ink"
-                    />
-                  </div>
+                  <Alert className="rounded-none border border-line bg-[hsl(var(--muted))]">
+                    <AlertDescription className="text-ink">
+                      No schema defined for this product template yet.
+                    </AlertDescription>
+                  </Alert>
                 )
               })()}
 

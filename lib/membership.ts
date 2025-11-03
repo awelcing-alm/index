@@ -181,6 +181,10 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                    LIMIT 1;
                 `).rows[0]
                 let attributes: any = row?.attributes && typeof row.attributes === 'object' ? row.attributes : {}
+                // If stored as { schema, values }, use the values payload for the profile
+                if (attributes && typeof attributes === 'object' && attributes.schema && attributes.values) {
+                  attributes = attributes.values
+                }
                 try {
                   if (key === 'mylaw') attributes = sanitizeMyLawProfile(attributes)
                   else if (key === 'radar') attributes = sanitizeRadarProfile(attributes)

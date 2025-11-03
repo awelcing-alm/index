@@ -7,6 +7,7 @@ import { NEWSLETTER_KEYS } from "@/lib/newsletters"
 import { upsertUserAppProfile } from "@/lib/extended-profile"
 import { PRODUCT_APP_IDS, type ProductKey } from "@/lib/product-templates"
 import { sanitizeMyLawProfile, sanitizeRadarProfile } from "@/lib/product-profiles"
+import { logServer } from "@/lib/logger"
 
 type SetMembershipInput = {
   accountId: string
@@ -94,22 +95,22 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
     }
 
     await sql/* sql */`COMMIT`
+    try { logServer("membership_set_commit", { accountId, changed: oldToNew.length, targetGroupId }) } catch {}
   } catch (e) {
     await sql/* sql */`ROLLBACK`
     throw e
   }
 
-  // Fire-and-forget Zephr attribute patch (keep server secrets server-side)
-  ;(async () => {
-    try {
-      if (groupRow) {
+  // Apply remote changes synchronously so UI can reflect immediately
+  try {
+    if (groupRow) {
         const demo = extractDemographicsFromGroup(groupRow)
         const attrs = { group: groupRow.name, ...demo }
-        await Promise.all(
-          oldToNew
-            .filter(x => x.newGroupId === groupRow!.id)
-            .map(x => updateUserAttributesAction(x.userId, attrs))
-        )
+      await Promise.all(
+        oldToNew
+          .filter(x => x.newGroupId === groupRow!.id)
+          .map(x => updateUserAttributesAction(x.userId, attrs))
+      )
 
         // Apply templates associated with the group
         const targetUserIds = oldToNew.filter(x => x.newGroupId === groupRow!.id).map(x => x.userId)
@@ -148,10 +149,13 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                   ? { ...full, ...Object.fromEntries(Object.entries(incoming).filter(([k]) => k in full)) }
                   : Object.fromEntries(Object.entries(incoming).filter(([k]) => k in full))
                 // Patch users with newsletter attributes
-                await Promise.all(targetUserIds.map((uid) => updateUserAttributesAction(uid, attrsToApply)))
+                const results = await Promise.all(targetUserIds.map((uid) => updateUserAttributesAction(uid, attrsToApply)))
+                const ok = results.filter(r => r?.success).length
+                try { logServer("newsletter_template_applied", { accountId: groupRow.account_id, groupId: groupRow.id, template: newsletterName, users: targetUserIds.length, ok }) } catch {}
               }
             } catch (e) {
               console.error("Apply newsletter template failed:", e)
+              try { logServer("newsletter_template_failed", { template: newsletterName, error: (e as any)?.message }) } catch {}
             }
           }
 
@@ -183,34 +187,38 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                 } catch {}
                 const appId = PRODUCT_APP_IDS[key]
                 // Upsert for each user (best-effort)
-                await Promise.all(
-                  targetUserIds.map(async (uid) => {
-                    try {
-                      const ok = await upsertUserAppProfile(uid, appId, attributes)
-                      if (!ok) console.error("Extended profile upsert returned false", { uid, key, appId })
-                      return ok
-                    } catch (err) {
-                      console.error("Extended profile upsert failed", { uid, key, appId, err })
-                      return false
-                    }
-                  })
-                )
+              const results = await Promise.all(
+                targetUserIds.map(async (uid) => {
+                  try {
+                    const ok = await upsertUserAppProfile(uid, appId, attributes)
+                    if (!ok) console.error("Extended profile upsert returned false", { uid, key, appId })
+                    return ok
+                  } catch (err) {
+                    console.error("Extended profile upsert failed", { uid, key, appId, err })
+                    return false
+                  }
+                })
+              )
+              try {
+                const okCount = results.filter(Boolean).length
+                logServer("extended_profile_apply_summary", { product: key, appId, template: tplName, users: targetUserIds.length, ok: okCount })
+              } catch {}
               }
             }
           } catch (e) {
             console.error("Apply product templates failed:", e)
+            try { logServer("extended_profile_apply_failed", { error: (e as any)?.message }) } catch {}
           }
         }
-      } else {
+    } else {
         // Clearing group: remove only "group" key (keep others intact). (Zephr may not support delete; set empty.)
-        await Promise.all(
-          oldToNew.map(x => updateUserAttributesAction(x.userId, { group: "" }))
-        )
-      }
-    } catch (patchErr) {
-      console.error("Background Zephr patch failed:", patchErr)
+      await Promise.all(
+        oldToNew.map(x => updateUserAttributesAction(x.userId, { group: "" }))
+      )
     }
-  })()
+  } catch (patchErr) {
+    console.error("Membership side-effects failed:", patchErr)
+  }
 
   const changed = oldToNew.filter(x => x.oldGroupId !== x.newGroupId).length
   return { changed, oldToNew }

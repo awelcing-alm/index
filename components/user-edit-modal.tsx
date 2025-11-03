@@ -209,6 +209,8 @@ export function UserEditModal({
   const [appLoading, setAppLoading] = useState(false)
   const [appDraft, setAppDraft] = useState<string>("")
   const [appSaveMsg, setAppSaveMsg] = useState<string | null>(null)
+  const [productTpls, setProductTpls] = useState<{ radar: string[]; compass: string[]; scholar: string[]; mylaw: string[] }>({ radar: [], compass: [], scholar: [], mylaw: [] })
+  const [grants, setGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
 
   const details = userDetails
 
@@ -230,6 +232,41 @@ export function UserEditModal({
         setTplErr("Failed to load templates")
       }
     })()
+  }, [isOpen])
+
+  // Load product template names + account grants
+  useEffect(() => {
+    if (!isOpen) return
+    let alive = true
+    ;(async () => {
+      try {
+        const [radar, compass, scholar, mylaw] = await Promise.all([
+          fetch("/api/product-templates/radar", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+          fetch("/api/product-templates/compass", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+          fetch("/api/product-templates/scholar", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+          fetch("/api/product-templates/mylaw", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+        ])
+        if (!alive) return
+        setProductTpls({
+          radar: (Array.isArray(radar) ? radar : []).filter(Boolean).sort(),
+          compass: (Array.isArray(compass) ? compass : []).filter(Boolean).sort(),
+          scholar: (Array.isArray(scholar) ? scholar : []).filter(Boolean).sort(),
+          mylaw: (Array.isArray(mylaw) ? mylaw : []).filter(Boolean).sort(),
+        })
+      } catch {
+        if (alive) setProductTpls({ radar: [], compass: [], scholar: [], mylaw: [] })
+      }
+      try {
+        const r = await fetch("/api/templates/products/grants", { cache: "no-store" })
+        const p = await r.json().catch(() => ({}))
+        if (!alive) return
+        const g = p?.grants || {}
+        setGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: true })
+      } catch {
+        if (alive) setGrants({ radar: false, compass: false, scholar: false, mylaw: true })
+      }
+    })()
+    return () => { alive = false }
   }, [isOpen])
 
   // probe Extended Profile app availability when opening and user is loaded
@@ -401,6 +438,20 @@ export function UserEditModal({
     }
   }
 
+  const applyProductTemplateToDraft = async (product: ProductKey, name: string) => {
+    if (!name) return
+    try {
+      const res = await fetch(`/api/product-templates/${product}/${encodeURIComponent(name)}`, { cache: "no-store" })
+      if (!res.ok) throw new Error(await res.text())
+      const payload = await res.json().catch(() => null)
+      const attrs = (payload && payload.attributes) || {}
+      setAppDraft(JSON.stringify(attrs, null, 2))
+    } catch (e) {
+      setAppSaveMsg((e as any)?.message || "Failed to load template")
+      setTimeout(() => setAppSaveMsg(null), 2500)
+    }
+  }
+
   const saveAppProfile = async () => {
     if (!details?.user_id || !activeApp) return
     setAppLoading(true)
@@ -464,7 +515,8 @@ export function UserEditModal({
                 onClick={() => loadAppProfile("radar")}
                 className={[
                   "flex items-center gap-1 rounded-md border px-2 py-1",
-                  appAvail.radar ? "border-blue-500 ring-2 ring-blue-300 animate-pulse" : "border-line",
+                  (appAvail.radar ? "border-blue-500 ring-2 ring-blue-300" : "border-line"),
+                  (grants && grants.radar === false ? "opacity-40 cursor-not-allowed" : ""),
                   "hover:bg-[hsl(var(--muted))]",
                 ].join(" ")}
                 title={appAvail.radar ? "Radar profile available" : "No Radar profile yet"}
@@ -477,7 +529,7 @@ export function UserEditModal({
                 onClick={() => loadAppProfile("mylaw")}
                 className={[
                   "flex items-center gap-1 rounded-md border px-2 py-1",
-                  appAvail.mylaw ? "border-amber-600 ring-2 ring-amber-300 animate-pulse" : "border-line",
+                  (appAvail.mylaw ? "border-amber-600 ring-2 ring-amber-300" : "border-line"),
                   "hover:bg-[hsl(var(--muted))]",
                 ].join(" ")}
                 title={appAvail.mylaw ? "MyLaw profile available" : "No MyLaw profile yet"}
@@ -490,7 +542,8 @@ export function UserEditModal({
                 onClick={() => loadAppProfile("compass")}
                 className={[
                   "flex items-center gap-1 rounded-md border px-2 py-1",
-                  appAvail.compass ? "border-green-600 ring-2 ring-green-300 animate-pulse" : "border-line",
+                  (appAvail.compass ? "border-green-600 ring-2 ring-green-300" : "border-line"),
+                  (grants && grants.compass === false ? "opacity-40 cursor-not-allowed" : ""),
                   "hover:bg-[hsl(var(--muted))]",
                 ].join(" ")}
                 title={appAvail.compass ? "Compass profile available" : "No Compass profile yet"}
@@ -503,7 +556,8 @@ export function UserEditModal({
                 onClick={() => loadAppProfile("scholar")}
                 className={[
                   "flex items-center gap-1 rounded-md border px-2 py-1",
-                  appAvail.scholar ? "border-purple-600 ring-2 ring-purple-300 animate-pulse" : "border-line",
+                  (appAvail.scholar ? "border-purple-600 ring-2 ring-purple-300" : "border-line"),
+                  (grants && grants.scholar === false ? "opacity-40 cursor-not-allowed" : ""),
                   "hover:bg-[hsl(var(--muted))]",
                 ].join(" ")}
                 title={appAvail.scholar ? "Scholar profile available" : "No Scholar profile yet"}
@@ -542,10 +596,29 @@ export function UserEditModal({
                 </Select>
               </div>
 
-              {/* Template */}
+              {/* Template (Newsletter or Active Product) */}
               <div className="space-y-2">
-                <Label className="text-[hsl(var(--muted-foreground))]">Apply Template</Label>
-                {tplErr ? (
+                <Label className="text-[hsl(var(--muted-foreground))]">
+                  {activeApp ? `Apply ${activeApp[0].toUpperCase() + activeApp.slice(1)} Template` : "Apply Newsletter Template"}
+                </Label>
+                {activeApp ? (
+                  <Select
+                    value={""}
+                    onValueChange={(v) => applyProductTemplateToDraft(activeApp, v)}
+                    disabled={!productTpls[activeApp]?.length}
+                  >
+                    <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                      <SelectValue placeholder={productTpls[activeApp]?.length ? "Choose template…" : "No product templates"} />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-none border border-line bg-paper">
+                      {(productTpls[activeApp] || []).map((n) => (
+                        <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">
+                          {n}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (
                   <Select disabled>

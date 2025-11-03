@@ -1,6 +1,7 @@
 // lib/extended-profile.ts
 import "server-only"
 import { logServer } from "@/lib/logger"
+import { sql } from "@/lib/db"
 import { adminApiCall } from "@/lib/zephr-api"
 import { PRODUCT_APP_IDS, ProductKey } from "@/lib/product-templates"
 
@@ -75,8 +76,29 @@ async function tryUserAppFetch(userId: string, appId: string): Promise<any | nul
 
 export async function getUserAppProfile(userId: string, appId: string): Promise<any | null> {
   try {
+    // 1) Try remote first
     const data = await tryUserAppFetch(userId, appId)
-    return data ?? null
+    if (data != null) {
+      // cache locally (best-effort)
+      try {
+        await ensureLocalTable()
+        await sql/* sql */`
+          INSERT INTO public.user_extended_profiles (user_id, app_id, data)
+          VALUES (${userId}, ${appId}, ${JSON.stringify(data)}::jsonb)
+          ON CONFLICT (user_id, app_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now();
+        `
+      } catch {}
+      return data
+    }
+    // 2) Fallback to local cache
+    try {
+      await ensureLocalTable()
+      const row = (await sql<{ data: any | null }>`
+        SELECT data FROM public.user_extended_profiles WHERE user_id = ${userId} AND app_id = ${appId} LIMIT 1;
+      `).rows[0]
+      if (row && row.data != null) return row.data
+    } catch {}
+    return null
   } catch (e: any) {
     logServer("getUserAppProfile_error", { userId, appId, error: e?.message })
     return null
@@ -84,27 +106,97 @@ export async function getUserAppProfile(userId: string, appId: string): Promise<
 }
 
 export async function upsertUserAppProfile(userId: string, appId: string, profile: any): Promise<boolean> {
-  const bodies = [JSON.stringify(profile)]
-  const endpoints = [
-    `/v3/users/${encodeURIComponent(userId)}/applications/${encodeURIComponent(appId)}/profile`,
-    `/v3/users/${encodeURIComponent(userId)}/extended-profiles/${encodeURIComponent(appId)}`,
+  const stringBodies = [
+    JSON.stringify(profile),
+    JSON.stringify({ data: profile }),
+    JSON.stringify({ profile }),
   ]
+
+  const base = `/v3/users/${encodeURIComponent(userId)}`
+  const endpoints = [
+    `${base}/applications/${encodeURIComponent(appId)}/profile`,
+    `${base}/applications/${encodeURIComponent(appId)}`,
+    `${base}/extended-profiles/${encodeURIComponent(appId)}`,
+    `${base}/apps/${encodeURIComponent(appId)}/profile`,
+  ]
+
+  // Try PUT across endpoints and body shapes
   for (const path of endpoints) {
-    try {
-      await adminApiCall(path, { method: "PUT", body: bodies[0] })
-      return true
-    } catch (e) {
-      // continue to next
+    for (const body of stringBodies) {
+      try {
+        await adminApiCall(path, { method: "PUT", body })
+        logServer("upsertUserAppProfile_ok", { path, userId, appId })
+        // also persist locally
+        try {
+          await ensureLocalTable()
+          await sql/* sql */`
+            INSERT INTO public.user_extended_profiles (user_id, app_id, data)
+            VALUES (${userId}, ${appId}, ${JSON.stringify(profile)}::jsonb)
+            ON CONFLICT (user_id, app_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now();
+          `
+        } catch {}
+        return true
+      } catch (e: any) {
+        logServer("upsertUserAppProfile_try_put_fail", { path, userId, appId, error: e?.message })
+      }
     }
   }
-  // As a last resort, POST
+  // Fallback POST
   for (const path of endpoints) {
-    try {
-      await adminApiCall(path, { method: "POST", body: bodies[0] })
-      return true
-    } catch (e) {}
+    for (const body of stringBodies) {
+      try {
+        await adminApiCall(path, { method: "POST", body })
+        logServer("upsertUserAppProfile_ok_post", { path, userId, appId })
+        try {
+          await ensureLocalTable()
+          await sql/* sql */`
+            INSERT INTO public.user_extended_profiles (user_id, app_id, data)
+            VALUES (${userId}, ${appId}, ${JSON.stringify(profile)}::jsonb)
+            ON CONFLICT (user_id, app_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now();
+          `
+        } catch {}
+        return true
+      } catch (e: any) {
+        logServer("upsertUserAppProfile_try_post_fail", { path, userId, appId, error: e?.message })
+      }
+    }
   }
-  return false
+  // Persist locally even if remote failed so UI reflects intent and can sync later
+  try {
+    await ensureLocalTable()
+    await sql/* sql */`
+      INSERT INTO public.user_extended_profiles (user_id, app_id, data)
+      VALUES (${userId}, ${appId}, ${JSON.stringify(profile)}::jsonb)
+      ON CONFLICT (user_id, app_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now();
+    `
+    logServer("upsertUserAppProfile_local_only", { userId, appId })
+    return true
+  } catch (e: any) {
+    logServer("upsertUserAppProfile_all_failed", { userId, appId, error: e?.message })
+    return false
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Local cache table (best-effort)                                            
+---------------------------------------------------------------------------*/
+let _tableEnsured = false
+async function ensureLocalTable() {
+  if (_tableEnsured) return
+  try {
+    await sql/* sql */`
+      CREATE TABLE IF NOT EXISTS public.user_extended_profiles (
+        user_id   text NOT NULL,
+        app_id    text NOT NULL,
+        data      jsonb,
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (user_id, app_id)
+      );
+    `
+    _tableEnsured = true
+  } catch (e) {
+    // ignore; operates as best-effort cache
+  }
 }
 
 export type UserAppProbe = {

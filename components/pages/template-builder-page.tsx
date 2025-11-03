@@ -202,12 +202,13 @@ export default function TemplateBuilderPage() {
         if (!res.ok) throw new Error(await res.text())
         const payload = await res.json().catch(() => ({}))
         if (!alive) return
-  const g = payload?.grants || {}
-  setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: !!g.mylaw })
+        const g = payload?.grants || {}
+        // MyLaw is available for all users; force-enable in UI
+        setProductGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: true })
       } catch (e: any) {
         if (!alive) return
         setProductGrantError(e?.message || "Failed to check product access")
-        setProductGrants({ radar: false, compass: false, scholar: false })
+        setProductGrants({ radar: false, compass: false, scholar: false, mylaw: true })
       }
     })()
     return () => { alive = false }

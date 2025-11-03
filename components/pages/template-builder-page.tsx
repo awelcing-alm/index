@@ -20,6 +20,7 @@ import { computeDisabledNewsletterSlugs, applyNewsletterPolicy } from "@/lib/pro
 import { getActiveAccountId } from "@/lib/account-store"
 import { DefaultTemplatesSection } from "@/components/pages/default-templates-section"
 import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
+import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
 
@@ -69,17 +70,29 @@ const apiGetTpl = async (kind: Kind, name: string): Promise<Template | null> => 
     if (!data || typeof data !== "object") return null
 
     const attrsRaw = (data as any).attributes || {}
-    const attrs: Record<string, boolean> = {}
-    for (const [k, v] of Object.entries(attrsRaw)) {
-      if (typeof v === "boolean") attrs[k] = v
-      else if (v === "true" || v === "false") attrs[k] = v === "true"
-      else if (v != null) attrs[k] = Boolean(v)
+    let attrs: any = {}
+    if (kind === "newsletter") {
+      const b: Record<string, boolean> = {}
+      for (const [k, v] of Object.entries(attrsRaw)) {
+        if (typeof v === "boolean") b[k] = v
+        else if (v === "true" || v === "false") b[k] = v === "true"
+        else if (v != null) b[k] = Boolean(v)
+      }
+      attrs = b
+    } else {
+      // Ensure product templates have a schema wrapper
+      if (attrsRaw && typeof attrsRaw === "object" && (attrsRaw as any).schema && Array.isArray((attrsRaw as any).schema.fields)) {
+        attrs = attrsRaw
+      } else {
+        const schema = PRODUCT_SCHEMAS[kind as keyof typeof PRODUCT_SCHEMAS]?.schema || { fields: [] }
+        attrs = { schema, values: attrsRaw || {} }
+      }
     }
 
     return {
       name: String((data as any).name ?? name),
       description: String((data as any).description ?? ""),
-      attributes: attrs,
+  attributes: attrs,
       overwriteFalse: (data as any).overwriteFalse === true,
       createdAt: String((data as any).createdAt ?? ""),
       updatedAt: (data as any).updatedAt ? String((data as any).updatedAt) : undefined,

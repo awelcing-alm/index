@@ -33,6 +33,7 @@ import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferen
 import React from "react"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -210,6 +211,7 @@ export function UserEditModal({
   const [appLoading, setAppLoading] = useState(false)
   const [appDraft, setAppDraft] = useState<string>("")
   const [appSaveMsg, setAppSaveMsg] = useState<string | null>(null)
+  const [openProduct, setOpenProduct] = useState<ProductKey | "">("")
   const [productTpls, setProductTpls] = useState<{ radar: string[]; compass: string[]; scholar: string[]; mylaw: string[] }>({ radar: [], compass: [], scholar: [], mylaw: [] })
   const [grants, setGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
   const [selectedProductTemplate, setSelectedProductTemplate] = useState<Partial<Record<ProductKey, string>>>({})
@@ -523,69 +525,279 @@ export function UserEditModal({
             <CardTitle className="font-serif text-lg text-ink">Apply Group & Template</CardTitle>
           </CardHeader>
           <CardContent>
-            {/* Extended Profile apps row */}
-            <div className="mb-4 flex items-center gap-3">
-              <span className="text-sm text-[hsl(var(--muted-foreground))]">Profiles:</span>
-              <button
-                type="button"
-                onClick={() => loadAppProfile("radar")}
-                className={[
-                  "flex items-center gap-1 rounded-md border px-2 py-1",
-                  (appAvail.radar ? "border-blue-500 ring-2 ring-blue-300" : "border-line"),
-                  (grants && grants.radar === false ? "opacity-40 cursor-not-allowed" : ""),
-                  "hover:bg-[hsl(var(--muted))]",
-                ].join(" ")}
-                title={appAvail.radar ? "Radar profile available" : "No Radar profile yet"}
-              >
-                <RadarIcon className="h-4 w-4 text-ink" />
-                <span className="text-sm">Radar</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => loadAppProfile("mylaw")}
-                className={[
-                  "flex items-center gap-1 rounded-md border px-2 py-1",
-                  (appAvail.mylaw ? "border-amber-600 ring-2 ring-amber-300" : "border-line"),
-                  "hover:bg-[hsl(var(--muted))]",
-                ].join(" ")}
-                title={appAvail.mylaw ? "MyLaw profile available" : "No MyLaw profile yet"}
-              >
-                <BookOpen className="h-4 w-4 text-ink" />
-                <span className="text-sm">MyLaw</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => loadAppProfile("compass")}
-                className={[
-                  "flex items-center gap-1 rounded-md border px-2 py-1",
-                  (appAvail.compass ? "border-green-600 ring-2 ring-green-300" : "border-line"),
-                  (grants && grants.compass === false ? "opacity-40 cursor-not-allowed" : ""),
-                  "hover:bg-[hsl(var(--muted))]",
-                ].join(" ")}
-                title={appAvail.compass ? "Compass profile available" : "No Compass profile yet"}
-              >
-                <CompassIcon className="h-4 w-4 text-ink" />
-                <span className="text-sm">Compass</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => loadAppProfile("scholar")}
-                className={[
-                  "flex items-center gap-1 rounded-md border px-2 py-1",
-                  (appAvail.scholar ? "border-purple-600 ring-2 ring-purple-300" : "border-line"),
-                  (grants && grants.scholar === false ? "opacity-40 cursor-not-allowed" : ""),
-                  "hover:bg-[hsl(var(--muted))]",
-                ].join(" ")}
-                title={appAvail.scholar ? "Scholar profile available" : "No Scholar profile yet"}
-              >
-                <GraduationCap className="h-4 w-4 text-ink" />
-                <span className="text-sm">Scholar</span>
-              </button>
-
-              {appErr && (
-                <span className="ml-2 text-xs text-[hsl(var(--destructive))]">{appErr}</span>
+            {/* Profiles accordion (low visual load) */}
+            <div className="mb-2 text-sm text-[hsl(var(--muted-foreground))]">Profiles</div>
+            <Accordion type="single" collapsible value={openProduct} onValueChange={(v) => {
+              const key = (v || "") as ProductKey | ""
+              setOpenProduct(key)
+              if (key) { setActiveApp(key as ProductKey); loadAppProfile(key as ProductKey) }
+            }}>
+              {/* MyLaw always available */}
+              <AccordionItem value="mylaw">
+                <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><BookOpen className="h-4 w-4" /> MyLaw {appAvail.mylaw ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
+                <AccordionContent>
+                  {activeApp === "mylaw" && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label className="text-[hsl(var(--muted-foreground))]">Apply MyLaw Template</Label>
+                        <Select value={selectedProductTemplate.mylaw || ""} onValueChange={(v) => applyProductTemplateToDraft("mylaw", v)} disabled={!productTpls.mylaw.length}>
+                          <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                            <SelectValue placeholder={productTpls.mylaw.length ? "Choose template…" : "No product templates"} />
+                          </SelectTrigger>
+                          <SelectContent className="rounded-none border border-line bg-paper">
+                            {productTpls.mylaw.map((n) => (
+                              <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">{n}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {selectedProductTemplate.mylaw && (
+                          <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate.mylaw}</span> (unsaved)</div>
+                        )}
+                      </div>
+                      <div className="rounded-none border border-line bg-paper p-3">
+                        {(() => {
+                          try {
+                            const raw = JSON.parse(appDraft || "{}")
+                            const normalized = sanitizeMyLawProfile(raw)
+                            const view = describeMyLaw(normalized)
+                            return (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
+                                <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
+                              </div>
+                            )
+                          } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div> }
+                        })()}
+                      </div>
+                      {/* Recommended (MyLaw): Topics & Regions */}
+                      <div className="rounded-none border border-line bg-paper p-3">
+                        <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
+                        <div className="flex flex-wrap gap-2">
+                          {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
+                            const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
+                            const prefs = raw?.preferences || {}
+                            const arr: any[] = Array.isArray(prefs.myLawTopics) ? prefs.myLawTopics : []
+                            const id = String((t as any).id || (t as any).mylawId || "")
+                            const selected = !!arr.find((x: any) => String(x?.mylawId || x?.id || "") === id)
+                            const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                            return (
+                              <button key={t.name} type="button" onClick={() => {
+                                const next = { ...(raw || {}) } as any
+                                next.preferences = next.preferences || {}
+                                const list: any[] = Array.isArray(next.preferences.myLawTopics) ? next.preferences.myLawTopics : []
+                                const idx = list.findIndex((x: any) => String(x?.mylawId || x?.id || "") === id)
+                                if (idx >= 0) list.splice(idx, 1)
+                                else list.push({ mylawId: id, name: String(t.name) })
+                                next.preferences.myLawTopics = list
+                                setAppDraft(JSON.stringify(next, null, 2))
+                              }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
+                            )
+                          })}
+                        </div>
+                        <div className="mt-3 mb-2 text-sm font-medium text-ink">Recommended Regions</div>
+                        <div className="flex flex-wrap gap-2">
+                          {MYLAW_REGION_RECS.map((r) => {
+                            const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
+                            const prefs = raw?.preferences || {}
+                            const arr: any[] = Array.isArray(prefs.virtualCategories) ? prefs.virtualCategories : []
+                            const selected = !!arr.find((x: any) => String(x?.name || "") === r.name)
+                            const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                            return (
+                              <button key={r.name} type="button" onClick={() => {
+                                const next = { ...(raw || {}) } as any
+                                next.preferences = next.preferences || {}
+                                const list: any[] = Array.isArray(next.preferences.virtualCategories) ? next.preferences.virtualCategories : []
+                                const idx = list.findIndex((x: any) => String(x?.name || "") === r.name)
+                                if (idx >= 0) list.splice(idx, 1)
+                                else list.push({ id: r.id || r.name, name: r.name })
+                                next.preferences.virtualCategories = list
+                                setAppDraft(JSON.stringify(next, null, 2))
+                              }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{r.name}</button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div className="rounded-none border border-line bg-paper p-3">
+                        <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
+                        <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
+                      </div>
+                      {(() => {
+                        try {
+                          const parsed = appDraft ? JSON.parse(appDraft) : {}
+                          const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
+                          if (fields && fields.length) {
+                            const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
+                            return (
+                              <div className="rounded-none border border-line bg-paper p-3">
+                                <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
+                                <ProfileSchemaForm fields={fields} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                              </div>
+                            )
+                          }
+                        } catch {}
+                        return null
+                      })()}
+                      <div className="flex items-center justify-end gap-2">
+                        {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
+                        <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
+                      </div>
+                    </div>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
+              {/* Radar if granted */}
+              {grants?.radar !== false && (
+                <AccordionItem value="radar">
+                  <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><RadarIcon className="h-4 w-4" /> Radar {appAvail.radar ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
+                  <AccordionContent>
+                    {activeApp === "radar" && (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label className="text-[hsl(var(--muted-foreground))]">Apply Radar Template</Label>
+                          <Select value={selectedProductTemplate.radar || ""} onValueChange={(v) => applyProductTemplateToDraft("radar", v)} disabled={!productTpls.radar.length}>
+                            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                              <SelectValue placeholder={productTpls.radar.length ? "Choose template…" : "No product templates"} />
+                            </SelectTrigger>
+                            <SelectContent className="rounded-none border border-line bg-paper">
+                              {productTpls.radar.map((n) => (
+                                <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">{n}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {selectedProductTemplate.radar && (
+                            <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate.radar}</span> (unsaved)</div>
+                          )}
+                        </div>
+                        <div className="rounded-none border border-line bg-paper p-3">
+                          {(() => {
+                            try {
+                              const raw = JSON.parse(appDraft || "{}")
+                              const normalized = sanitizeRadarProfile(raw)
+                              const view = describeRadar(normalized)
+                              return (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
+                                  <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
+                                </div>
+                              )
+                            } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid Radar JSON</div> }
+                          })()}
+                        </div>
+                        <div className="rounded-none border border-line bg-paper p-3">
+                          <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
+                          <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
+                        </div>
+                        {/* Recommended (Radar) Topics */}
+                        <div className="rounded-none border border-line bg-paper p-3">
+                          <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
+                          <div className="flex flex-wrap gap-2">
+                            {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
+                              const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
+                              const userData = raw?.data?.userData || raw?.userData || raw
+                              const arr: any[] = Array.isArray(userData?.followedEntities) ? userData.followedEntities : []
+                              const id = String((t as any).id || (t as any).mylawId || "")
+                              const selected = !!arr.find((x: any) => String(x?.id || "") === id)
+                              const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                              return (
+                                <button key={t.name} type="button" onClick={() => {
+                                  const next = { ...(raw || {}) } as any
+                                  const u = (next.data && next.data.userData) ? next.data.userData : (next.userData || (next.userData = {}))
+                                  u.followedEntities = Array.isArray(u.followedEntities) ? u.followedEntities : []
+                                  const idx = u.followedEntities.findIndex((x: any) => String(x?.id || "") === id)
+                                  if (idx >= 0) u.followedEntities.splice(idx, 1)
+                                  else u.followedEntities.push({ id, name: String(t.name), type: "topic" })
+                                  if (next.data && next.data.userData) next.data.userData = u
+                                  else next.userData = u
+                                  setAppDraft(JSON.stringify(next, null, 2))
+                                }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                        {(() => {
+                          try {
+                            const parsed = appDraft ? JSON.parse(appDraft) : {}
+                            const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
+                            if (fields && fields.length) {
+                              const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
+                              return (
+                                <div className="rounded-none border border-line bg-paper p-3">
+                                  <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
+                                  <ProfileSchemaForm fields={fields} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                                </div>
+                              )
+                            }
+                          } catch {}
+                          return null
+                        })()}
+                        <div className="flex items-center justify-end gap-2">
+                          {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
+                          <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
+                        </div>
+                      </div>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
               )}
-            </div>
+              {/* Compass if granted */}
+              {grants?.compass && (
+                <AccordionItem value="compass">
+                  <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><CompassIcon className="h-4 w-4" /> Compass {appAvail.compass ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
+                  <AccordionContent>
+                    {activeApp === "compass" && (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label className="text-[hsl(var(--muted-foreground))]">Apply Compass Template</Label>
+                          <Select value={selectedProductTemplate.compass || ""} onValueChange={(v) => applyProductTemplateToDraft("compass", v)} disabled={!productTpls.compass.length}>
+                            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                              <SelectValue placeholder={productTpls.compass.length ? "Choose template…" : "No product templates"} />
+                            </SelectTrigger>
+                            <SelectContent className="rounded-none border border-line bg-paper">
+                              {productTpls.compass.map((n) => (
+                                <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">{n}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {selectedProductTemplate.compass && (
+                            <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate.compass}</span> (unsaved)</div>
+                          )}
+                        </div>
+                        {(() => {
+                          try {
+                            const parsed = appDraft ? JSON.parse(appDraft) : {}
+                            const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
+                            if (fields && fields.length) {
+                              const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
+                              return (
+                                <div className="rounded-none border border-line bg-paper p-3">
+                                  <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
+                                  <ProfileSchemaForm fields={fields} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                                </div>
+                              )
+                            }
+                          } catch {}
+                          return <div className="text-xs text-[hsl(var(--muted-foreground))]">No schema</div>
+                        })()}
+                        <div className="flex items-center justify-end gap-2">
+                          {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
+                          <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
+                        </div>
+                      </div>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {/* Scholar if granted */}
+              {grants?.scholar && (
+                <AccordionItem value="scholar">
+                  <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> Scholar {appAvail.scholar ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
+                  <AccordionContent />
+                </AccordionItem>
+              )}
+            </Accordion>
+            {appErr && (
+              <span className="mt-2 block text-xs text-[hsl(var(--destructive))]">{appErr}</span>
+            )}
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Group */}

@@ -3,6 +3,10 @@ import "server-only"
 import { sql } from "@/lib/db"
 import { listGroups, type Group } from "@/lib/groups"
 import { updateUserAttributesAction } from "@/lib/user-actions"
+import { NEWSLETTER_KEYS } from "@/lib/newsletters"
+import { upsertUserAppProfile } from "@/lib/extended-profile"
+import { PRODUCT_APP_IDS, type ProductKey } from "@/lib/product-templates"
+import { sanitizeMyLawProfile, sanitizeRadarProfile } from "@/lib/product-profiles"
 
 type SetMembershipInput = {
   accountId: string
@@ -106,6 +110,97 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
             .filter(x => x.newGroupId === groupRow!.id)
             .map(x => updateUserAttributesAction(x.userId, attrs))
         )
+
+        // Apply templates associated with the group
+        const targetUserIds = oldToNew.filter(x => x.newGroupId === groupRow!.id).map(x => x.userId)
+        if (targetUserIds.length) {
+          // 1) Newsletter default template
+          const newsletterName = groupRow.default_template || null
+          if (newsletterName) {
+            try {
+              // Try account-specific first, then global default
+              const rowAcc = (await sql<{ attributes: any | null; overwrite_false: boolean | null }>/* sql */`
+                SELECT attributes, overwrite_false
+                  FROM public.templates
+                 WHERE account_id = ${groupRow.account_id}
+                   AND is_default = false
+                   AND (type = 'newsletter' OR type IS NULL)
+                   AND name = ${newsletterName}
+                 LIMIT 1;
+              `).rows[0]
+              const rowDef = rowAcc
+                ? null
+                : (await sql<{ attributes: any | null; overwrite_false: boolean | null }>/* sql */`
+                    SELECT attributes, overwrite_false
+                      FROM public.templates
+                     WHERE is_default = true
+                       AND (type = 'newsletter' OR type IS NULL)
+                       AND name = ${newsletterName}
+                     LIMIT 1;
+                  `).rows[0]
+
+              const src = rowAcc || rowDef
+              if (src) {
+                const overwriteFalse = !!src.overwrite_false
+                const incoming = (src.attributes && typeof src.attributes === 'object') ? src.attributes : {}
+                const full: Record<string, boolean> = Object.fromEntries(NEWSLETTER_KEYS.map(k => [k, false]))
+                const attrsToApply = overwriteFalse
+                  ? { ...full, ...Object.fromEntries(Object.entries(incoming).filter(([k]) => k in full)) }
+                  : Object.fromEntries(Object.entries(incoming).filter(([k]) => k in full))
+                // Patch users with newsletter attributes
+                await Promise.all(targetUserIds.map((uid) => updateUserAttributesAction(uid, attrsToApply)))
+              }
+            } catch (e) {
+              console.error("Apply newsletter template failed:", e)
+            }
+          }
+
+          // 2) Product templates (stored under demographics["product-templates"]) => upsert Extended Profiles
+          try {
+            const pt = (groupRow.demographics as any)?.["product-templates"] || (groupRow.demographics as any)?.["product_templates"] || null
+            if (pt && typeof pt === 'object') {
+              const entries = Object.entries(pt) as Array<[string, string]>
+              for (const [keyRaw, tplNameRaw] of entries) {
+                const key = String(keyRaw).toLowerCase() as ProductKey
+                const tplName = String(tplNameRaw || "").trim()
+                if (!tplName) continue
+                if (!['radar','compass','scholar','mylaw'].includes(key)) continue
+
+                // Load template attributes for this product
+                const row = (await sql<{ attributes: any | null }>/* sql */`
+                  SELECT attributes
+                    FROM public.templates
+                   WHERE account_id = ${groupRow.account_id}
+                     AND is_default = false
+                     AND type = ${key}
+                     AND name = ${tplName}
+                   LIMIT 1;
+                `).rows[0]
+                let attributes: any = row?.attributes && typeof row.attributes === 'object' ? row.attributes : {}
+                try {
+                  if (key === 'mylaw') attributes = sanitizeMyLawProfile(attributes)
+                  else if (key === 'radar') attributes = sanitizeRadarProfile(attributes)
+                } catch {}
+                const appId = PRODUCT_APP_IDS[key]
+                // Upsert for each user (best-effort)
+                await Promise.all(
+                  targetUserIds.map(async (uid) => {
+                    try {
+                      const ok = await upsertUserAppProfile(uid, appId, attributes)
+                      if (!ok) console.error("Extended profile upsert returned false", { uid, key, appId })
+                      return ok
+                    } catch (err) {
+                      console.error("Extended profile upsert failed", { uid, key, appId, err })
+                      return false
+                    }
+                  })
+                )
+              }
+            }
+          } catch (e) {
+            console.error("Apply product templates failed:", e)
+          }
+        }
       } else {
         // Clearing group: remove only "group" key (keep others intact). (Zephr may not support delete; set empty.)
         await Promise.all(

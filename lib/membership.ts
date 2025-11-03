@@ -7,6 +7,7 @@ import { NEWSLETTER_KEYS } from "@/lib/newsletters"
 import { upsertUserAppProfile } from "@/lib/extended-profile"
 import { PRODUCT_APP_IDS, type ProductKey } from "@/lib/product-templates"
 import { sanitizeMyLawProfile, sanitizeRadarProfile } from "@/lib/product-profiles"
+import { logServer } from "@/lib/logger"
 
 type SetMembershipInput = {
   accountId: string
@@ -94,6 +95,7 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
     }
 
     await sql/* sql */`COMMIT`
+    try { logServer("membership_set_commit", { accountId, changed: oldToNew.length, targetGroupId }) } catch {}
   } catch (e) {
     await sql/* sql */`ROLLBACK`
     throw e
@@ -147,10 +149,13 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                   ? { ...full, ...Object.fromEntries(Object.entries(incoming).filter(([k]) => k in full)) }
                   : Object.fromEntries(Object.entries(incoming).filter(([k]) => k in full))
                 // Patch users with newsletter attributes
-                await Promise.all(targetUserIds.map((uid) => updateUserAttributesAction(uid, attrsToApply)))
+                const results = await Promise.all(targetUserIds.map((uid) => updateUserAttributesAction(uid, attrsToApply)))
+                const ok = results.filter(r => r?.success).length
+                try { logServer("newsletter_template_applied", { accountId: groupRow.account_id, groupId: groupRow.id, template: newsletterName, users: targetUserIds.length, ok }) } catch {}
               }
             } catch (e) {
               console.error("Apply newsletter template failed:", e)
+              try { logServer("newsletter_template_failed", { template: newsletterName, error: (e as any)?.message }) } catch {}
             }
           }
 
@@ -182,7 +187,7 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                 } catch {}
                 const appId = PRODUCT_APP_IDS[key]
                 // Upsert for each user (best-effort)
-              await Promise.all(
+              const results = await Promise.all(
                 targetUserIds.map(async (uid) => {
                   try {
                     const ok = await upsertUserAppProfile(uid, appId, attributes)
@@ -194,10 +199,15 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                   }
                 })
               )
+              try {
+                const okCount = results.filter(Boolean).length
+                logServer("extended_profile_apply_summary", { product: key, appId, template: tplName, users: targetUserIds.length, ok: okCount })
+              } catch {}
               }
             }
           } catch (e) {
             console.error("Apply product templates failed:", e)
+            try { logServer("extended_profile_apply_failed", { error: (e as any)?.message }) } catch {}
           }
         }
     } else {

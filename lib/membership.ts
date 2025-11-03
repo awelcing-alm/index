@@ -99,17 +99,16 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
     throw e
   }
 
-  // Fire-and-forget Zephr attribute patch (keep server secrets server-side)
-  ;(async () => {
-    try {
-      if (groupRow) {
+  // Apply remote changes synchronously so UI can reflect immediately
+  try {
+    if (groupRow) {
         const demo = extractDemographicsFromGroup(groupRow)
         const attrs = { group: groupRow.name, ...demo }
-        await Promise.all(
-          oldToNew
-            .filter(x => x.newGroupId === groupRow!.id)
-            .map(x => updateUserAttributesAction(x.userId, attrs))
-        )
+      await Promise.all(
+        oldToNew
+          .filter(x => x.newGroupId === groupRow!.id)
+          .map(x => updateUserAttributesAction(x.userId, attrs))
+      )
 
         // Apply templates associated with the group
         const targetUserIds = oldToNew.filter(x => x.newGroupId === groupRow!.id).map(x => x.userId)
@@ -183,34 +182,33 @@ export async function setMembershipBulk(input: SetMembershipInput): Promise<SetM
                 } catch {}
                 const appId = PRODUCT_APP_IDS[key]
                 // Upsert for each user (best-effort)
-                await Promise.all(
-                  targetUserIds.map(async (uid) => {
-                    try {
-                      const ok = await upsertUserAppProfile(uid, appId, attributes)
-                      if (!ok) console.error("Extended profile upsert returned false", { uid, key, appId })
-                      return ok
-                    } catch (err) {
-                      console.error("Extended profile upsert failed", { uid, key, appId, err })
-                      return false
-                    }
-                  })
-                )
+              await Promise.all(
+                targetUserIds.map(async (uid) => {
+                  try {
+                    const ok = await upsertUserAppProfile(uid, appId, attributes)
+                    if (!ok) console.error("Extended profile upsert returned false", { uid, key, appId })
+                    return ok
+                  } catch (err) {
+                    console.error("Extended profile upsert failed", { uid, key, appId, err })
+                    return false
+                  }
+                })
+              )
               }
             }
           } catch (e) {
             console.error("Apply product templates failed:", e)
           }
         }
-      } else {
+    } else {
         // Clearing group: remove only "group" key (keep others intact). (Zephr may not support delete; set empty.)
-        await Promise.all(
-          oldToNew.map(x => updateUserAttributesAction(x.userId, { group: "" }))
-        )
-      }
-    } catch (patchErr) {
-      console.error("Background Zephr patch failed:", patchErr)
+      await Promise.all(
+        oldToNew.map(x => updateUserAttributesAction(x.userId, { group: "" }))
+      )
     }
-  })()
+  } catch (patchErr) {
+    console.error("Membership side-effects failed:", patchErr)
+  }
 
   const changed = oldToNew.filter(x => x.oldGroupId !== x.newGroupId).length
   return { changed, oldToNew }

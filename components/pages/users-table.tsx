@@ -559,22 +559,34 @@ export default function UsersTable({
           <div className="flex items-center gap-2">
             <span className="sr-only">Profiles</span>
             {keys.includes("radar" as any) && (
-              <span title={f.radar ? "Radar profile available" : "No Radar profile"}>
+              <span
+                title={f.radar ? "Radar profile available" : "No Radar profile"}
+                className={f.radar ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
+              >
                 <RadarIcon className={iconCls(f.radar)} />
               </span>
             )}
             {keys.includes("mylaw" as any) && (
-              <span title={f.mylaw ? "MyLaw profile available" : "No MyLaw profile"}>
+              <span
+                title={f.mylaw ? "MyLaw profile available" : "No MyLaw profile"}
+                className={f.mylaw ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
+              >
                 <BookOpen className={iconCls(f.mylaw)} />
               </span>
             )}
             {keys.includes("compass" as any) && (
-              <span title={f.compass ? "Compass profile available" : "No Compass profile"}>
+              <span
+                title={f.compass ? "Compass profile available" : "No Compass profile"}
+                className={f.compass ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
+              >
                 <CompassIcon className={iconCls(f.compass)} />
               </span>
             )}
             {keys.includes("scholar" as any) && (
-              <span title={f.scholar ? "Scholar profile available" : "No Scholar profile"}>
+              <span
+                title={f.scholar ? "Scholar profile available" : "No Scholar profile"}
+                className={f.scholar ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
+              >
                 <GraduationCap className={iconCls(f.scholar)} />
               </span>
             )}

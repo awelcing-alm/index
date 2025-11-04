@@ -34,6 +34,7 @@ import React from "react"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@radix-ui/react-tabs"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -630,7 +631,7 @@ export function UserEditModal({
                             return (
                               <div className="rounded-none border border-line bg-paper p-3">
                                 <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                <ProfileSchemaForm fields={fields} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                                <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
                               </div>
                             )
                           }
@@ -723,7 +724,7 @@ export function UserEditModal({
                               return (
                                 <div className="rounded-none border border-line bg-paper p-3">
                                   <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                  <ProfileSchemaForm fields={fields} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                                  <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
                                 </div>
                               )
                             }
@@ -771,7 +772,7 @@ export function UserEditModal({
                               return (
                                 <div className="rounded-none border border-line bg-paper p-3">
                                   <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                  <ProfileSchemaForm fields={fields} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                                  <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
                                 </div>
                               )
                             }

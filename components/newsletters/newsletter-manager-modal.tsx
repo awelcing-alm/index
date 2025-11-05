@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
+import { motion, AnimatePresence } from "framer-motion"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Save } from "lucide-react"
 import {
@@ -35,6 +36,7 @@ type Props = {
   userId: string
   userEmail: string
   existingAttributes?: Record<string, any> | null
+  effectiveFromTemplates?: { values: Record<string, boolean>; sources: Record<string, string[]> }
 }
 
 export default function NewsletterManagerModal({
@@ -43,6 +45,7 @@ export default function NewsletterManagerModal({
   userId,
   userEmail,
   existingAttributes,
+  effectiveFromTemplates,
 }: Props) {
   const [query, setQuery] = useState("")
   const [saving, setSaving] = useState(false)
@@ -207,6 +210,8 @@ export default function NewsletterManagerModal({
                       {group.slugs.map((slug) => {
                         const isChecked = !!checked[slug as NewsletterSlug]
                         const label = slug.replace(/-/g, " ")
+                        const eff = effectiveFromTemplates?.values?.[slug] ?? undefined
+                        const effSrc = effectiveFromTemplates?.sources?.[slug] || []
                         return (
                           <label
                             key={slug}
@@ -225,6 +230,37 @@ export default function NewsletterManagerModal({
                             >
                               {label}
                             </span>
+                            {/* effective chip */}
+                            <AnimatePresence initial={false}>
+                              {typeof eff === "boolean" && (
+                                <motion.span
+                                  key={`chip-${slug}-${eff}-${effSrc.join("+")}`}
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1, scale: [1, 1.04, 1] }}
+                                  exit={{ opacity: 0 }}
+                                  className="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[hsl(var(--muted-foreground))]"
+                                >
+                                  Effective: {eff ? "✓" : "✗"} {effSrc.length ? `(${effSrc.join("+")})` : "(Manual)"}
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                            {/* Revert quick action when diverged */}
+                            <AnimatePresence initial={false}>
+                              {typeof eff === "boolean" && eff !== isChecked && (
+                                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => toggle(slug as NewsletterSlug, eff)}
+                                    className="ml-2 h-6 rounded-none border-line px-2 text-[10px] text-ink hover:bg-[hsl(var(--muted))]"
+                                    title="Revert to composed value"
+                                  >
+                                    Revert
+                                  </Button>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                             {/* subtle background when selected */}
                             <span
                               aria-hidden

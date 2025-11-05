@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { getActiveAccountId } from "@/lib/account-store"
 import { GroupIconInline, normalizeIconKey } from "@/components/group-icon"
+import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
+import { toast } from "@/hooks/use-toast"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 type Group = {
   account_id: string
@@ -103,6 +106,13 @@ export default function GroupManagerPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [needsAccount, setNeedsAccount] = useState(false)
+  const [applyOpen, setApplyOpen] = useState(false)
+  const [applyGroupId, setApplyGroupId] = useState<string | null>(null)
+  const [savedStacks, setSavedStacks] = useState<Array<{ name: string; list: string[] }>>([])
+  const [initialStack, setInitialStack] = useState<string[] | undefined>(undefined)
+  useEffect(() => {
+    try { const raw = localStorage.getItem("template_stacks"); const arr = raw ? JSON.parse(raw) : []; if (Array.isArray(arr)) setSavedStacks(arr) } catch {}
+  }, [])
 
   // form
   const [name, setName] = useState("")
@@ -541,6 +551,24 @@ export default function GroupManagerPage() {
       <section className="rounded-xl border p-4 md:p-6 bg-background">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Existing Groups</h2>
+          {savedStacks.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Stacks:</span>
+              {savedStacks.map((p) => {
+                const tip = (p.list || []).slice(0,6).join(" + ") + ((p.list || []).length>6?" + …":"")
+                return (
+                  <TooltipProvider key={p.name}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button onClick={() => { setInitialStack(p.list); setApplyOpen(true) }} className="rounded-none border border-line px-2 py-1 text-sm hover:bg-[hsl(var(--muted))]">{p.name}</button>
+                      </TooltipTrigger>
+                      <TooltipContent className="rounded-none border-line bg-paper text-ink">{tip || "(empty)"}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {loading && <p>Loading groups…</p>}
@@ -561,6 +589,13 @@ export default function GroupManagerPage() {
                     <span className="inline-flex h-5 w-5 rounded border" style={{ background: g.color }} />
                   )}
                   <button
+                    onClick={() => { setApplyGroupId(g.id); setApplyOpen(true) }}
+                    className="rounded-none border border-line px-2 py-1 text-sm text-ink hover:bg-[hsl(var(--muted))]"
+                    title="Apply templates to group members"
+                  >
+                    Apply Templates…
+                  </button>
+                  <button
                     onClick={() => deleteOne(g)}
                     className="text-red-600 hover:underline"
                     title="Delete group"
@@ -573,6 +608,19 @@ export default function GroupManagerPage() {
           </ul>
         )}
       </section>
+
+      {/* Apply Templates to Group modal */}
+      <ApplyTemplatesModal
+        open={applyOpen}
+        onOpenChange={setApplyOpen}
+        target={{ type: "group", ids: applyGroupId ? [applyGroupId] : [] }}
+        initialStack={initialStack}
+        onApplied={({ wrote }) => {
+          toast({ title: "Group apply complete", description: `${wrote} field${wrote === 1 ? "" : "s"} written.` })
+          setApplyOpen(false)
+          setInitialStack(undefined)
+        }}
+      />
     </div>
   )
 }

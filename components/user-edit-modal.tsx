@@ -35,6 +35,8 @@ import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ProductTemplatePicker } from "@/components/profiles/product-template-picker"
+import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
+import { toast } from "@/hooks/use-toast"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -196,6 +198,8 @@ export function UserEditModal({
   const [tplErr, setTplErr] = useState<string | null>(null)
   const [tplValue, setTplValue] = useState<string | null>(null)
   const [pendingTpl, setPendingTpl] = useState<string | null>(null)
+  const [tplStack, setTplStack] = useState<string[]>([])
+  const [effectiveFromTemplates, setEffectiveFromTemplates] = useState<{ values: Record<string, boolean>, sources: Record<string, string[]> } | null>(null)
 
   // groups
   const lookups = useMemo(() => buildLookups(groups), [groups])
@@ -204,6 +208,18 @@ export function UserEditModal({
 
   // newsletters modal state (must be inside component)
   const [newsletterOpen, setNewsletterOpen] = useState(false)
+  // simple UX for Copy/Compose/Apply
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [applyOpen, setApplyOpen] = useState(false)
+  // Auto-open apply from URL share link
+  useEffect(() => {
+    if (!isOpen) return
+    try {
+      const url = new URL(window.location.href)
+      const openParam = url.searchParams.get("open") || ""
+      if (openParam === "apply") setApplyOpen(true)
+    } catch {}
+  }, [isOpen])
 
   // Extended Profile app availability + editor
   const [appAvail, setAppAvail] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean }>({})
@@ -238,6 +254,31 @@ export function UserEditModal({
       }
     })()
   }, [isOpen])
+
+  // Preview effective newsletters from template stack
+  useEffect(() => {
+    const userId = details?.user_id
+    if (!isOpen || !userId) return
+    if (!tplStack.length) { setEffectiveFromTemplates(null); return }
+    let alive = true
+    ;(async () => {
+      try {
+        const res = await fetch("/api/templates/merge-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ templateNames: tplStack, baseUserId: userId }),
+        })
+        const payload = await res.json().catch(() => null)
+        if (!alive || !payload) return
+        const values = (payload.result && typeof payload.result === 'object') ? payload.result : {}
+        const src = (payload.sources && typeof payload.sources === 'object') ? payload.sources : {}
+        setEffectiveFromTemplates({ values, sources: src })
+      } catch {
+        if (alive) setEffectiveFromTemplates(null)
+      }
+    })()
+    return () => { alive = false }
+  }, [isOpen, details?.user_id, tplStack])
 
   // Load product template names + account grants
   useEffect(() => {
@@ -350,11 +391,39 @@ export function UserEditModal({
       setEdited((p) => ({ ...p, ...tpl.attributes }))
       setTplValue(name)
       setPendingTpl(name)
+      setTplStack([name])
       setSaveErr(null)
     } catch (e) {
       console.error(e)
       setSaveErr("Failed to apply template")
     }
+  }
+
+  // --- Copy current user to a new template (newsletter-only MVP)
+  const copyUserToTemplate = async () => {
+    if (!details?.user_id) return
+    const name = prompt("Template name to save from this user?")?.trim()
+    if (!name) return
+    setBusyAction("copy")
+    try {
+      const res = await fetch("/api/templates/copy-from-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: details.user_id, name }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setSuccess(`Saved template “${name}” from user`)
+    } catch (e: any) {
+      setSaveErr(e?.message || "Failed to save template")
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  // --- Apply multiple templates to this user (comma-separated prompt MVP)
+  const applyTemplatesToThisUser = async () => {
+    if (!details?.user_id) return
+    setApplyOpen(true)
   }
 
   const onChooseGroup = async (id: string) => {
@@ -526,6 +595,20 @@ export function UserEditModal({
             <CardTitle className="font-serif text-lg text-ink">Apply Group & Template</CardTitle>
           </CardHeader>
           <CardContent>
+            {/* quick actions */}
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" onClick={copyUserToTemplate} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Save as Template…</Button>
+              <Button size="sm" variant="outline" onClick={applyTemplatesToThisUser} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Apply Templates…</Button>
+              <Button size="sm" variant="outline" onClick={() => {
+                try {
+                  const url = new URL(window.location.href)
+                  url.searchParams.set("open", "apply")
+                  if (tplStack.length) url.searchParams.set("stack", encodeURIComponent(tplStack.join(",")))
+                  navigator.clipboard.writeText(url.toString())
+                  toast({ title: "Link copied", description: "Open with Apply Templates preloaded." })
+                } catch {}
+              }} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Share Apply Link</Button>
+            </div>
             {/* Profile tabs (like editor tabs) */}
             <div className="mb-2 text-sm text-[hsl(var(--muted-foreground))]">Profiles</div>
             <Tabs
@@ -1003,6 +1086,23 @@ export function UserEditModal({
             userId={details.user_id}
             userEmail={details.identifiers?.email_address || ""}
             existingAttributes={details.attributes}
+            effectiveFromTemplates={effectiveFromTemplates || undefined}
+          />
+        )}
+
+        {/* Apply Templates modal */}
+        {details && (
+          <ApplyTemplatesModal
+            open={applyOpen}
+            onOpenChange={(v) => setApplyOpen(v)}
+            target={{ type: "user", ids: [details.user_id] }}
+            baseUserId={details.user_id}
+            onApplied={({ wrote }) => {
+              setSuccess(`Templates processed; wrote ${wrote} fields`)
+              // refresh effective stack
+              setTplStack((prev) => prev)
+              toast({ title: "Templates processed", description: `${wrote} field${wrote === 1 ? "" : "s"} written.` })
+            }}
           />
         )}
       </DialogContent>

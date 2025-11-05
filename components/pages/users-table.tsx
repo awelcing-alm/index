@@ -68,6 +68,10 @@ import { updateUserAttributesAction } from "@/lib/user-actions"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import type { Group } from "@/lib/groups"
 import { UserEditButton } from "@/components/user-edit-button"
+import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
+import { toast } from "@/hooks/use-toast"
+import { motion, AnimatePresence } from "framer-motion"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 /* ====================== types ====================== */
 export type GroupWithCount = Group & { user_count?: number }
@@ -188,6 +192,9 @@ export default function UsersTable({
 
   /* template names (defaults + custom) */
   const [templateNames, setTemplateNames] = useState<string[]>([])
+  const [applyOpen, setApplyOpen] = useState(false)
+  const [savedStacks, setSavedStacks] = useState<Array<{ name: string; list: string[] }>>([])
+  const [initialStack, setInitialStack] = useState<string[] | undefined>(undefined)
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -211,6 +218,10 @@ export default function UsersTable({
       }
     })()
     return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    try { const raw = localStorage.getItem("template_stacks"); const arr = raw ? JSON.parse(raw) : []; if (Array.isArray(arr)) setSavedStacks(arr) } catch {}
   }, [])
 
   /* groups lookup */
@@ -918,8 +929,9 @@ export default function UsersTable({
         </Alert>
       )}
 
+      <AnimatePresence>
       {table.getSelectedRowModel().rows.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted))] p-3">
+        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} className="mb-4 flex flex-wrap items-center gap-4 rounded-none border border-line bg-[hsl(var(--muted))] p-3">
           <p className="text-sm text-ink">
             {table.getSelectedRowModel().rows.length} selected
           </p>
@@ -958,11 +970,38 @@ export default function UsersTable({
             </SelectContent>
           </Select>
 
+          <Button size="sm" variant="outline" onClick={() => setApplyOpen(true)} className={["rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]", (initialStack && initialStack.length ? "animate-pulse" : "")].join(" ") }>
+            Apply Templates…
+          </Button>
+
+          {/* Stacks shortcuts */}
+          {savedStacks.length > 0 && (
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs text-[hsl(var(--muted-foreground))]">Stacks:</span>
+              {savedStacks.map((p) => {
+                const label = p.name
+                const tip = (p.list || []).slice(0, 6).join(" + ") + ((p.list || []).length > 6 ? " + …" : "")
+                return (
+                  <TooltipProvider key={label}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="sm" variant="outline" className="rounded-none border-line text-ink" onClick={() => { setInitialStack(p.list); setApplyOpen(true) }}>
+                          {label}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="rounded-none border-line bg-paper text-ink">{tip || "(empty)"}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )
+              })}
+            </div>
+          )}
           {loading && (
             <Loader2 className="h-4 w-4 animate-spin text-ink" aria-label="Working…" />
           )}
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Toolbar: global search + group filter (only) */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -1193,6 +1232,20 @@ export default function UsersTable({
           ))}
         </div>
       </div>
+
+      {/* Bulk Apply modal */}
+      <ApplyTemplatesModal
+        open={applyOpen}
+        onOpenChange={setApplyOpen}
+        target={{ type: "user", ids: selectedIds }}
+        initialStack={initialStack}
+        onApplied={({ wrote }) => {
+          toast({ title: "Bulk apply complete", description: `${wrote} field${wrote === 1 ? "" : "s"} written.` })
+          setApplyOpen(false)
+          table.resetRowSelection()
+          setInitialStack(undefined)
+        }}
+      />
     </>
   )
 }

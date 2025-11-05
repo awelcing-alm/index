@@ -23,6 +23,8 @@ import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferen
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
+import { toast } from "@/hooks/use-toast"
+import { fingerprintAttributes } from "@/lib/utils"
 
 /* ---------------- types ---------------- */
 type Kind = "newsletter" | "radar" | "compass" | "scholar" | "mylaw"
@@ -112,12 +114,25 @@ const apiSaveTpl = async (kind: Kind, tpl: Template, exists: boolean) => {
     overwriteFalse: !!tpl.overwriteFalse,
   }
   const base = kind === "newsletter" ? "/api/templates" : `/api/product-templates/${kind}`
-  const res = await fetch(`${base}${exists && kind === "newsletter" ? `/${encodeURIComponent(tpl.name)}` : (exists ? `/${encodeURIComponent(tpl.name)}` : "")}`.replace(/\/+/g, "/"), {
+  const res = await fetch(`${base}${exists ? `/${encodeURIComponent(tpl.name)}` : ""}`, {
     method: exists ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
   if (!res.ok) {
+    if (res.status === 409) {
+      let suggestion = ""
+      try { const data = await res.json(); suggestion = data?.suggestion || "" } catch {}
+      const rename = window.prompt(
+        `A template named "${tpl.name}" already exists. Enter a new name to save:`,
+        suggestion || `${tpl.name} (1)`
+      )
+      if (rename && rename.trim() && rename.trim() !== tpl.name) {
+        return apiSaveTpl(kind, { ...tpl, name: rename.trim() }, exists)
+      }
+      const msg = await res.text().catch(() => "")
+      throw new Error(msg || `Name already exists`)
+    }
     const msg = await res.text().catch(() => "")
     throw new Error(msg || `Save failed (${res.status})`)
   }
@@ -152,6 +167,14 @@ export default function TemplateBuilderPage() {
   const [saved, setSaved] = useState<string>("")
   const [query, setQuery] = useState("") // filter query
   const [err, setErr] = useState<string>("")
+  const [savedStacks, setSavedStacks] = useState<Array<{ name: string; list: string[] }>>([])
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("template_stacks")
+      const arr = raw ? JSON.parse(raw) : []
+      if (Array.isArray(arr)) setSavedStacks(arr)
+    } catch {}
+  }, [])
 
   // Product-template gating (Radar / Compass / Scholar)
   const [productGrants, setProductGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
@@ -238,6 +261,18 @@ export default function TemplateBuilderPage() {
     })
     return applyNewsletterPolicy(productGrants, full)
   }
+
+  // Dirty detection: compare working payload + flags against saved template
+  const isDirty = useMemo(() => {
+    if (!current.name) return false
+    const saved = templates.find(t => t.name === current.name)
+    if (!saved) return !!(current.name || current.description || Object.keys(current.attributes||{}).length)
+    const workingPayload = buildAttributePayload()
+    const workingFp = fingerprintAttributes({ attributes: workingPayload, overwriteFalse: current.overwriteFalse, description: current.description, kind })
+    const savedFp = fingerprintAttributes({ attributes: saved.attributes || {}, overwriteFalse: saved.overwriteFalse, description: saved.description, kind })
+    return workingFp !== savedFp
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, templates, kind, productGrants])
 
   const saveCurrent = async () => {
     setErr("")
@@ -333,6 +368,24 @@ export default function TemplateBuilderPage() {
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
             Create, save and apply custom templates
           </p>
+          {savedStacks.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-[hsl(var(--muted-foreground))]">Stacks:</span>
+              {savedStacks.map((p) => (
+                <Button key={p.name} size="sm" variant="outline" className="rounded-none border-line text-ink" onClick={() => {
+                  try {
+                    const url = new URL(window.location.href)
+                    url.searchParams.set("open", "apply")
+                    url.searchParams.set("stack", encodeURIComponent(p.list.join(",")))
+                    navigator.clipboard.writeText(url.toString())
+                    toast({ title: "Link copied", description: `Open Apply with “${p.name}” preloaded.` })
+                  } catch {}
+                }}>
+                  {p.name}
+                </Button>
+              ))}
+            </div>
+          )}
         </CardHeader>
 
         <CardContent>
@@ -410,6 +463,11 @@ export default function TemplateBuilderPage() {
                     onChange={(e) => setCurrent({ ...current, name: e.target.value })}
                     className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
                   />
+                  {isEditing && current.name && (
+                    <div className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+                      Editing: <span className="text-ink">{current.name}{isDirty ? "*" : ""}</span>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Label className="text-[hsl(var(--muted-foreground))]">Description</Label>
@@ -652,9 +710,10 @@ export default function TemplateBuilderPage() {
                 <Button
                   onClick={saveCurrent}
                   className="rounded-none bg-ink text-paper hover:bg-ink/90"
+                  disabled={isEditing && !isDirty}
                 >
                   <Save className="mr-2 h-4 w-4" />
-                  {isEditing ? "Update" : "Save"}
+                  {isEditing ? (isDirty ? "Update" : "Up to date") : "Save"}
                 </Button>
 
                 {isEditing && (

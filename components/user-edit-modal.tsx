@@ -35,7 +35,7 @@ import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ProductTemplatePicker } from "@/components/profiles/product-template-picker"
-import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal.v2"
+import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
 import { toast } from "@/hooks/use-toast"
 
 /* -------------------- types --------------------- */
@@ -582,7 +582,7 @@ export function UserEditModal({
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="h-[92vh] w-[96vw] max-w-none overflow-y-auto rounded-none border border-line bg-background text-ink shadow-2xl">
-        <DialogHeader className="sticky top-0 z-10 border-b border-line bg-background/95 px-2 py-3 backdrop-blur">
+        <DialogHeader className="sticky top-0 z-0 border-b border-line bg-background/95 px-2 py-3 pr-10 backdrop-blur">
           <DialogTitle className="flex items-center gap-3 font-serif text-2xl tracking-tight text-ink">
             <UsersIcon className="h-6 w-6" aria-hidden="true" />
             Edit User: {details?.identifiers?.email_address ?? "…"}
@@ -599,15 +599,6 @@ export function UserEditModal({
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" onClick={copyUserToTemplate} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Save as Template…</Button>
               <Button size="sm" variant="outline" onClick={applyTemplatesToThisUser} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Apply Templates…</Button>
-              <Button size="sm" variant="outline" onClick={() => {
-                try {
-                  const url = new URL(window.location.href)
-                  url.searchParams.set("open", "apply")
-                  if (tplStack.length) url.searchParams.set("stack", encodeURIComponent(tplStack.join(",")))
-                  navigator.clipboard.writeText(url.toString())
-                  toast({ title: "Link copied", description: "Open with Apply Templates preloaded." })
-                } catch {}
-              }} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Share Apply Link</Button>
             </div>
             {/* Profile tabs (like editor tabs) */}
             <div className="mb-2 text-sm text-[hsl(var(--muted-foreground))]">Profiles</div>
@@ -615,26 +606,32 @@ export function UserEditModal({
               value={openProduct || ""}
               onValueChange={(v) => {
                 const key = (v || "") as ProductKey | ""
+                // toggle behavior: clicking active tab closes it
+                if (key && key === openProduct) {
+                  setOpenProduct("")
+                  setActiveApp(null)
+                  return
+                }
                 setOpenProduct(key)
                 if (key) { setActiveApp(key as ProductKey); loadAppProfile(key as ProductKey) }
               }}
             >
               <TabsList className="rounded-none border-b border-line bg-transparent">
-                <TabsTrigger value="mylaw" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
+                <TabsTrigger value="mylaw" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
                   <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" /> MyLaw {appAvail.mylaw ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                 </TabsTrigger>
                 {grants?.radar !== false && (
-                  <TabsTrigger value="radar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <TabsTrigger value="radar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
                     <div className="flex items-center gap-2"><RadarIcon className="h-4 w-4" /> Radar {appAvail.radar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                   </TabsTrigger>
                 )}
                 {grants?.compass && (
-                  <TabsTrigger value="compass" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <TabsTrigger value="compass" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
                     <div className="flex items-center gap-2"><CompassIcon className="h-4 w-4" /> Compass {appAvail.compass ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                   </TabsTrigger>
                 )}
                 {grants?.scholar && (
-                  <TabsTrigger value="scholar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <TabsTrigger value="scholar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
                     <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> Scholar {appAvail.scholar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                   </TabsTrigger>
                 )}

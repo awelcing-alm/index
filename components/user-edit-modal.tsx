@@ -33,8 +33,8 @@ import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferen
 import React from "react"
 import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@radix-ui/react-tabs"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { ProductTemplatePicker } from "@/components/profiles/product-template-picker"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -526,101 +526,196 @@ export function UserEditModal({
             <CardTitle className="font-serif text-lg text-ink">Apply Group & Template</CardTitle>
           </CardHeader>
           <CardContent>
-            {/* Profiles accordion (low visual load) */}
+            {/* Profile tabs (like editor tabs) */}
             <div className="mb-2 text-sm text-[hsl(var(--muted-foreground))]">Profiles</div>
-            <Accordion type="single" collapsible value={openProduct} onValueChange={(v) => {
-              const key = (v || "") as ProductKey | ""
-              setOpenProduct(key)
-              if (key) { setActiveApp(key as ProductKey); loadAppProfile(key as ProductKey) }
-            }}>
-              {/* MyLaw always available */}
-              <AccordionItem value="mylaw">
-                <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><BookOpen className="h-4 w-4" /> MyLaw {appAvail.mylaw ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
-                <AccordionContent>
-                  {activeApp === "mylaw" && (
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label className="text-[hsl(var(--muted-foreground))]">Apply MyLaw Template</Label>
-                        <Select value={selectedProductTemplate.mylaw || ""} onValueChange={(v) => applyProductTemplateToDraft("mylaw", v)} disabled={!productTpls.mylaw.length}>
-                          <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                            <SelectValue placeholder={productTpls.mylaw.length ? "Choose template…" : "No product templates"} />
-                          </SelectTrigger>
-                          <SelectContent className="rounded-none border border-line bg-paper">
-                            {productTpls.mylaw.map((n) => (
-                              <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">{n}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {selectedProductTemplate.mylaw && (
-                          <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate.mylaw}</span> (unsaved)</div>
-                        )}
+            <Tabs
+              value={openProduct || ""}
+              onValueChange={(v) => {
+                const key = (v || "") as ProductKey | ""
+                setOpenProduct(key)
+                if (key) { setActiveApp(key as ProductKey); loadAppProfile(key as ProductKey) }
+              }}
+            >
+              <TabsList className="rounded-none bg-[hsl(var(--muted))]/40">
+                <TabsTrigger value="mylaw" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" /> MyLaw {appAvail.mylaw ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
+                </TabsTrigger>
+                {grants?.radar !== false && (
+                  <TabsTrigger value="radar" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                    <div className="flex items-center gap-2"><RadarIcon className="h-4 w-4" /> Radar {appAvail.radar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
+                  </TabsTrigger>
+                )}
+                {grants?.compass && (
+                  <TabsTrigger value="compass" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                    <div className="flex items-center gap-2"><CompassIcon className="h-4 w-4" /> Compass {appAvail.compass ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
+                  </TabsTrigger>
+                )}
+                {grants?.scholar && (
+                  <TabsTrigger value="scholar" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                    <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> Scholar {appAvail.scholar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
+                  </TabsTrigger>
+                )}
+              </TabsList>
+
+              {/* MyLaw */}
+              <TabsContent value="mylaw">
+                {activeApp === "mylaw" && (
+                  <div className="space-y-4">
+                    <ProductTemplatePicker
+                      product="mylaw"
+                      templates={productTpls.mylaw}
+                      value={selectedProductTemplate.mylaw}
+                      onApply={applyProductTemplateToDraft}
+                      label="Apply MyLaw Template"
+                    />
+                    <div className="rounded-none border border-line bg-paper p-3">
+                      {(() => {
+                        try {
+                          const raw = JSON.parse(appDraft || "{}")
+                          const normalized = sanitizeMyLawProfile(raw)
+                          const view = describeMyLaw(normalized)
+                          return (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
+                              <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
+                            </div>
+                          )
+                        } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div> }
+                      })()}
+                    </div>
+                    {/* Recommended (MyLaw): Topics & Regions */}
+                    <div className="rounded-none border border-line bg-paper p-3">
+                      <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
+                      <div className="flex flex-wrap gap-2">
+                        {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
+                          const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
+                          const prefs = (raw as any)?.preferences || {}
+                          const arr: any[] = Array.isArray(prefs.topics) ? prefs.topics : []
+                          const name = String(t.name)
+                          const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
+                          const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                          return (
+                            <button key={t.name} type="button" onClick={() => {
+                              const next = { ...(raw || {}) } as any
+                              next.preferences = next.preferences || {}
+                              const list: any[] = Array.isArray(next.preferences.topics) ? next.preferences.topics : []
+                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
+                              if (idx >= 0) list.splice(idx, 1)
+                              else list.push({ name })
+                              next.preferences.topics = list
+                              setAppDraft(JSON.stringify(next, null, 2))
+                            }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
+                          )
+                        })}
                       </div>
+                      <div className="mt-3 mb-2 text-sm font-medium text-ink">Recommended Regions</div>
+                      <div className="flex flex-wrap gap-2">
+                        {MYLAW_REGION_RECS.map((r) => {
+                          const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
+                          const prefs = (raw as any)?.preferences || {}
+                          const arr: any[] = Array.isArray(prefs.regions) ? prefs.regions : []
+                          const name = String(r.name)
+                          const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
+                          const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
+                          return (
+                            <button key={r.name} type="button" onClick={() => {
+                              const next = { ...(raw || {}) } as any
+                              next.preferences = next.preferences || {}
+                              const list: any[] = Array.isArray(next.preferences.regions) ? next.preferences.regions : []
+                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
+                              if (idx >= 0) list.splice(idx, 1)
+                              else list.push({ name })
+                              next.preferences.regions = list
+                              setAppDraft(JSON.stringify(next, null, 2))
+                            }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{r.name}</button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <div className="rounded-none border border-line bg-paper p-3">
+                      <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
+                      <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
+                    </div>
+                    {(() => {
+                      try {
+                        const parsed = appDraft ? JSON.parse(appDraft) : {}
+                        const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
+                        if (fields && fields.length) {
+                          const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
+                          return (
+                            <div className="rounded-none border border-line bg-paper p-3">
+                              <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
+                              <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                            </div>
+                          )
+                        }
+                      } catch {}
+                      return null
+                    })()}
+                    <div className="flex items-center justify-end gap-2">
+                      {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
+                      <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* Radar */}
+              {grants?.radar !== false && (
+                <TabsContent value="radar">
+                  {activeApp === "radar" && (
+                    <div className="space-y-4">
+                      <ProductTemplatePicker
+                        product="radar"
+                        templates={productTpls.radar}
+                        value={selectedProductTemplate.radar}
+                        onApply={applyProductTemplateToDraft}
+                        label="Apply Radar Template"
+                      />
                       <div className="rounded-none border border-line bg-paper p-3">
                         {(() => {
                           try {
                             const raw = JSON.parse(appDraft || "{}")
-                            const normalized = sanitizeMyLawProfile(raw)
-                            const view = describeMyLaw(normalized)
+                            const normalized = sanitizeRadarProfile(raw)
+                            const view = describeRadar(normalized)
                             return (
                               <div className="flex flex-wrap items-center gap-2">
                                 <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
                                 <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
                               </div>
                             )
-                          } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div> }
+                          } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid Radar JSON</div> }
                         })()}
                       </div>
-                      {/* Recommended (MyLaw): Topics & Regions */}
+                      <div className="rounded-none border border-line bg-paper p-3">
+                        <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
+                        <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
+                      </div>
                       <div className="rounded-none border border-line bg-paper p-3">
                         <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
                         <div className="flex flex-wrap gap-2">
                           {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
                             const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
-                            const prefs = raw?.preferences || {}
-                            const arr: any[] = Array.isArray(prefs.myLawTopics) ? prefs.myLawTopics : []
+                            const userData = (raw as any)?.data?.userData || (raw as any)?.userData || raw
+                            const arr: any[] = Array.isArray((userData as any)?.followedEntities) ? (userData as any).followedEntities : []
                             const id = String((t as any).id || (t as any).mylawId || "")
-                            const selected = !!arr.find((x: any) => String(x?.mylawId || x?.id || "") === id)
+                            const selected = !!arr.find((x: any) => String(x?.id || "") === id)
                             const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
                             return (
                               <button key={t.name} type="button" onClick={() => {
                                 const next = { ...(raw || {}) } as any
-                                next.preferences = next.preferences || {}
-                                const list: any[] = Array.isArray(next.preferences.myLawTopics) ? next.preferences.myLawTopics : []
-                                const idx = list.findIndex((x: any) => String(x?.mylawId || x?.id || "") === id)
-                                if (idx >= 0) list.splice(idx, 1)
-                                else list.push({ mylawId: id, name: String(t.name) })
-                                next.preferences.myLawTopics = list
+                                const u = (next.data && next.data.userData) ? next.data.userData : (next.userData || (next.userData = {}))
+                                u.followedEntities = Array.isArray(u.followedEntities) ? u.followedEntities : []
+                                const idx = u.followedEntities.findIndex((x: any) => String(x?.id || "") === id)
+                                if (idx >= 0) u.followedEntities.splice(idx, 1)
+                                else u.followedEntities.push({ id, name: String(t.name), type: "topic" })
+                                if (next.data && next.data.userData) next.data.userData = u
+                                else next.userData = u
                                 setAppDraft(JSON.stringify(next, null, 2))
                               }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
                             )
                           })}
                         </div>
-                        <div className="mt-3 mb-2 text-sm font-medium text-ink">Recommended Regions</div>
-                        <div className="flex flex-wrap gap-2">
-                          {MYLAW_REGION_RECS.map((r) => {
-                            const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
-                            const prefs = raw?.preferences || {}
-                            const arr: any[] = Array.isArray(prefs.virtualCategories) ? prefs.virtualCategories : []
-                            const selected = !!arr.find((x: any) => String(x?.name || "") === r.name)
-                            const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
-                            return (
-                              <button key={r.name} type="button" onClick={() => {
-                                const next = { ...(raw || {}) } as any
-                                next.preferences = next.preferences || {}
-                                const list: any[] = Array.isArray(next.preferences.virtualCategories) ? next.preferences.virtualCategories : []
-                                const idx = list.findIndex((x: any) => String(x?.name || "") === r.name)
-                                if (idx >= 0) list.splice(idx, 1)
-                                else list.push({ id: r.id || r.name, name: r.name })
-                                next.preferences.virtualCategories = list
-                                setAppDraft(JSON.stringify(next, null, 2))
-                              }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{r.name}</button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      <div className="rounded-none border border-line bg-paper p-3">
-                        <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
-                        <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
                       </div>
                       {(() => {
                         try {
@@ -644,158 +739,51 @@ export function UserEditModal({
                       </div>
                     </div>
                   )}
-                </AccordionContent>
-              </AccordionItem>
-              {/* Radar if granted */}
-              {grants?.radar !== false && (
-                <AccordionItem value="radar">
-                  <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><RadarIcon className="h-4 w-4" /> Radar {appAvail.radar ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
-                  <AccordionContent>
-                    {activeApp === "radar" && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label className="text-[hsl(var(--muted-foreground))]">Apply Radar Template</Label>
-                          <Select value={selectedProductTemplate.radar || ""} onValueChange={(v) => applyProductTemplateToDraft("radar", v)} disabled={!productTpls.radar.length}>
-                            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                              <SelectValue placeholder={productTpls.radar.length ? "Choose template…" : "No product templates"} />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-none border border-line bg-paper">
-                              {productTpls.radar.map((n) => (
-                                <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">{n}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {selectedProductTemplate.radar && (
-                            <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate.radar}</span> (unsaved)</div>
-                          )}
-                        </div>
-                        <div className="rounded-none border border-line bg-paper p-3">
-                          {(() => {
-                            try {
-                              const raw = JSON.parse(appDraft || "{}")
-                              const normalized = sanitizeRadarProfile(raw)
-                              const view = describeRadar(normalized)
-                              return (
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
-                                  <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
-                                </div>
-                              )
-                            } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid Radar JSON</div> }
-                          })()}
-                        </div>
-                        <div className="rounded-none border border-line bg-paper p-3">
-                          <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
-                          <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
-                        </div>
-                        {/* Recommended (Radar) Topics */}
-                        <div className="rounded-none border border-line bg-paper p-3">
-                          <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
-                          <div className="flex flex-wrap gap-2">
-                            {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
-                              const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
-                              const userData = raw?.data?.userData || raw?.userData || raw
-                              const arr: any[] = Array.isArray(userData?.followedEntities) ? userData.followedEntities : []
-                              const id = String((t as any).id || (t as any).mylawId || "")
-                              const selected = !!arr.find((x: any) => String(x?.id || "") === id)
-                              const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
-                              return (
-                                <button key={t.name} type="button" onClick={() => {
-                                  const next = { ...(raw || {}) } as any
-                                  const u = (next.data && next.data.userData) ? next.data.userData : (next.userData || (next.userData = {}))
-                                  u.followedEntities = Array.isArray(u.followedEntities) ? u.followedEntities : []
-                                  const idx = u.followedEntities.findIndex((x: any) => String(x?.id || "") === id)
-                                  if (idx >= 0) u.followedEntities.splice(idx, 1)
-                                  else u.followedEntities.push({ id, name: String(t.name), type: "topic" })
-                                  if (next.data && next.data.userData) next.data.userData = u
-                                  else next.userData = u
-                                  setAppDraft(JSON.stringify(next, null, 2))
-                                }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                        {(() => {
-                          try {
-                            const parsed = appDraft ? JSON.parse(appDraft) : {}
-                            const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
-                            if (fields && fields.length) {
-                              const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
-                              return (
-                                <div className="rounded-none border border-line bg-paper p-3">
-                                  <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                  <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
-                                </div>
-                              )
-                            }
-                          } catch {}
-                          return null
-                        })()}
-                        <div className="flex items-center justify-end gap-2">
-                          {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
-                          <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
-                        </div>
-                      </div>
-                    )}
-                  </AccordionContent>
-                </AccordionItem>
+                </TabsContent>
               )}
-              {/* Compass if granted */}
+
+              {/* Compass */}
               {grants?.compass && (
-                <AccordionItem value="compass">
-                  <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><CompassIcon className="h-4 w-4" /> Compass {appAvail.compass ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
-                  <AccordionContent>
-                    {activeApp === "compass" && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label className="text-[hsl(var(--muted-foreground))]">Apply Compass Template</Label>
-                          <Select value={selectedProductTemplate.compass || ""} onValueChange={(v) => applyProductTemplateToDraft("compass", v)} disabled={!productTpls.compass.length}>
-                            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                              <SelectValue placeholder={productTpls.compass.length ? "Choose template…" : "No product templates"} />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-none border border-line bg-paper">
-                              {productTpls.compass.map((n) => (
-                                <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">{n}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {selectedProductTemplate.compass && (
-                            <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate.compass}</span> (unsaved)</div>
-                          )}
-                        </div>
-                        {(() => {
-                          try {
-                            const parsed = appDraft ? JSON.parse(appDraft) : {}
-                            const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
-                            if (fields && fields.length) {
-                              const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
-                              return (
-                                <div className="rounded-none border border-line bg-paper p-3">
-                                  <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                  <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
-                                </div>
-                              )
-                            }
-                          } catch {}
-                          return <div className="text-xs text-[hsl(var(--muted-foreground))]">No schema</div>
-                        })()}
-                        <div className="flex items-center justify-end gap-2">
-                          {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
-                          <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
-                        </div>
+                <TabsContent value="compass">
+                  {activeApp === "compass" && (
+                    <div className="space-y-4">
+                      <ProductTemplatePicker
+                        product="compass"
+                        templates={productTpls.compass}
+                        value={selectedProductTemplate.compass}
+                        onApply={applyProductTemplateToDraft}
+                        label="Apply Compass Template"
+                      />
+                      {(() => {
+                        try {
+                          const parsed = appDraft ? JSON.parse(appDraft) : {}
+                          const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
+                          if (fields && fields.length) {
+                            const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
+                            return (
+                              <div className="rounded-none border border-line bg-paper p-3">
+                                <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
+                                <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
+                              </div>
+                            )
+                          }
+                        } catch {}
+                        return <div className="text-xs text-[hsl(var(--muted-foreground))]">No schema</div>
+                      })()}
+                      <div className="flex items-center justify-end gap-2">
+                        {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
+                        <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
                       </div>
-                    )}
-                  </AccordionContent>
-                </AccordionItem>
+                    </div>
+                  )}
+                </TabsContent>
               )}
-              {/* Scholar if granted */}
+
+              {/* Scholar placeholder */}
               {grants?.scholar && (
-                <AccordionItem value="scholar">
-                  <AccordionTrigger className="text-ink"><div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> Scholar {appAvail.scholar ? <span className="ml-2 text-xs text-ink">• available</span> : null}</div></AccordionTrigger>
-                  <AccordionContent />
-                </AccordionItem>
+                <TabsContent value="scholar" />
               )}
-            </Accordion>
+            </Tabs>
             {appErr && (
               <span className="mt-2 block text-xs text-[hsl(var(--destructive))]">{appErr}</span>
             )}
@@ -831,27 +819,12 @@ export function UserEditModal({
                   {activeApp ? `Apply ${activeApp[0].toUpperCase() + activeApp.slice(1)} Template` : "Apply Newsletter Template"}
                 </Label>
                 {activeApp ? (
-                  <>
-                  <Select
-                    value={selectedProductTemplate[activeApp] || ""}
-                    onValueChange={(v) => applyProductTemplateToDraft(activeApp, v)}
-                    disabled={!productTpls[activeApp]?.length}
-                  >
-                    <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                      <SelectValue placeholder={productTpls[activeApp]?.length ? "Choose template…" : "No product templates"} />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-none border border-line bg-paper">
-                      {(productTpls[activeApp] || []).map((n) => (
-                        <SelectItem key={n} value={n} className="rounded-none text-ink hover:bg-[hsl(var(--muted))]">
-                          {n}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {activeApp && selectedProductTemplate[activeApp] ? (
-                    <div className="text-xs text-[hsl(var(--muted-foreground))]">Selected Template: <span className="text-ink">{selectedProductTemplate[activeApp]}</span> (unsaved)</div>
-                  ) : null}
-                  </>
+                  <ProductTemplatePicker
+                    product={activeApp}
+                    templates={productTpls[activeApp] || []}
+                    value={selectedProductTemplate[activeApp]}
+                    onApply={applyProductTemplateToDraft}
+                  />
                 ) : tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (
@@ -882,292 +855,7 @@ export function UserEditModal({
             </div>
           </CardContent>
         </Card>
-
-        {/* When an app is selected, render its JSON editor */}
-        {activeApp && (
-          <Card className="mt-3 rounded-none border border-line bg-paper">
-            <CardHeader className="pb-2">
-              <CardTitle className="font-serif text-lg text-ink capitalize">{activeApp} Profile</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                Edit the user’s Extended Profile document for this app.
-              </p>
-              {appLoading ? (
-                <div className="flex items-center gap-2 text-[hsl(var(--muted-foreground))]">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading profile…
-                </div>
-              ) : (
-                <>
-                  {activeApp === "radar" && (
-                    <div className="rounded-none border border-line bg-paper p-3">
-                      {(() => {
-                        try {
-                          const raw = JSON.parse(appDraft || "{}")
-                          const normalized = sanitizeRadarProfile(raw)
-                          const view = describeRadar(normalized)
-                          return (
-                            <div className="space-y-4">
-                              {/* meta */}
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
-                                <span className="ml-2 hidden h-5 w-px bg-[hsl(var(--border))] md:inline-block" />
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Topics: {view.counts.topics}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Companies: {view.counts.companies}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Law Firms: {view.counts.lawFirms}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Virtual: {view.counts.virtualCategories}</Badge>
-                              </div>
-                              <Separator className="bg-[hsl(var(--border))]" />
-                              <div className="grid gap-4 md:grid-cols-2">
-                                {!!view.topics.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Radar Topics</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.topics.map((t) => (
-                                          <Badge key={`${t.id}-${t.name}`} variant="outline" className="rounded-none border-line text-ink">{t.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {!!view.companies.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Companies</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.companies.map((c) => (
-                                          <Badge key={`${c.id}-${c.name}`} variant="outline" className="rounded-none border-line text-ink">{c.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {!!view.lawFirms.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Law Firms</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.lawFirms.map((lf) => (
-                                          <Badge key={`${lf.id}-${lf.name}`} variant="outline" className="rounded-none border-line text-ink">{lf.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {!!view.virtualCategories.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Virtual Categories</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.virtualCategories.map((v) => (
-                                          <Badge key={`${v.id}-${v.name}`} variant="outline" className="rounded-none border-line text-ink">{v.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        } catch {
-                          return <div className="text-sm text-[hsl(var(--muted-foreground))]">Invalid Radar JSON</div>
-                        }
-                      })()}
-                    </div>
-                  )}
-                  {activeApp === "mylaw" && (
-                    <div className="rounded-none border border-line bg-paper p-3">
-                      {(() => {
-                        try {
-                          const raw = JSON.parse(appDraft || "{}")
-                          const normalized = sanitizeMyLawProfile(raw)
-                          const view = describeMyLaw(normalized)
-                          return (
-                            <div className="space-y-4">
-                              {/* meta */}
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
-                                <span className="ml-2 hidden h-5 w-px bg-[hsl(var(--border))] md:inline-block" />
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Topics: {view.counts.topics}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Industries: {view.counts.industries}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Practice Areas: {view.counts.practiceAreas}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Virtual: {view.counts.virtualCategories}</Badge>
-                              </div>
-                              <Separator className="bg-[hsl(var(--border))]" />
-                              <div className="grid gap-4 md:grid-cols-2">
-                                {!!view.topics.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">MyLaw Topics</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.topics.map((t) => (
-                                          <Badge key={`${t.id}-${t.name}`} variant="outline" className="rounded-none border-line text-ink">{t.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {!!view.industries?.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Industries</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.industries.map((c: any) => (
-                                          <Badge key={`${c.id}-${c.name}`} variant="outline" className="rounded-none border-line text-ink">{c.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {!!view.practiceAreas?.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Practice Areas</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.practiceAreas.map((c: any) => (
-                                          <Badge key={`${c.id}-${c.name}`} variant="outline" className="rounded-none border-line text-ink">{c.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                                {!!view.virtualCategories.length && (
-                                  <div>
-                                    <div className="mb-1 text-sm font-medium text-ink">Virtual Categories</div>
-                                    <div className="max-h-32 overflow-y-auto rounded-none border border-line bg-paper p-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {view.virtualCategories.map((v) => (
-                                          <Badge key={`${v.id}-${v.name}`} variant="outline" className="rounded-none border-line text-ink">{v.name}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        } catch {
-                          return <div className="text-sm text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div>
-                        }
-                      })()}
-                            </div>
-                  )}
-                            {/* Recommended adders for consistency with Template Builder */}
-                            <div className="mt-4 space-y-3">
-                              <div>
-                                <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
-                                <div className="flex flex-wrap gap-2">
-                                  {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => (
-                                    <Button
-                                      key={t.name}
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="rounded-none border-line text-ink"
-                                      onClick={() => {
-                                        try {
-                                          const parsed = JSON.parse(appDraft || "{}")
-                                          const pref = parsed.preferences || { topics: [], regions: [] }
-                                          const list = Array.isArray(pref.topics) ? pref.topics : []
-                                          if (!list.find((x: any) => String(x?.name || "").toLowerCase() === t.name.toLowerCase())) {
-                                            list.push({ name: t.name })
-                                          }
-                                          const next = JSON.stringify({ preferences: { ...pref, topics: list } }, null, 2)
-                                          setAppDraft(next)
-                                        } catch {}
-                                      }}
-                                      title={`Add ${t.name}`}
-                                    >
-                                      + {t.name}
-                                    </Button>
-                                  ))}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="mb-2 text-sm font-medium text-ink">Recommended Regions</div>
-                                <div className="flex flex-wrap gap-2">
-                                  {MYLAW_REGION_RECS.map((r) => (
-                                    <Button
-                                      key={r.name}
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="rounded-none border-line text-ink"
-                                      onClick={() => {
-                                        try {
-                                          const parsed = JSON.parse(appDraft || "{}")
-                                          const pref = parsed.preferences || { topics: [], regions: [] }
-                                          const list = Array.isArray(pref.regions) ? pref.regions : []
-                                          if (!list.find((x: any) => String(x?.name || "").toLowerCase() === r.name.toLowerCase())) {
-                                            list.push({ name: r.name })
-                                          }
-                                          const next = JSON.stringify({ preferences: { ...pref, regions: list } }, null, 2)
-                                          setAppDraft(next)
-                                        } catch {}
-                                      }}
-                                      title={`Add ${r.name}`}
-                                    >
-                                      + {r.name}
-                                    </Button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                  {/* Structured editor */}
-                  {(activeApp === "mylaw" || activeApp === "radar") && (
-                    <div className="mt-3 rounded-none border border-line bg-paper p-3">
-                      <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
-                      <ProfilePreferencesEditor
-                        jsonText={appDraft}
-                        onJsonChange={(next) => setAppDraft(next)}
-                      />
-                    </div>
-                  )}
-
-                  {/* Schema-driven editor for products when schema present */}
-                  {(() => {
-                    try {
-                      const parsed = appDraft ? JSON.parse(appDraft) : {}
-                      const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields)
-                        ? parsed.schema.fields
-                        : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
-                      if (fields && fields.length) {
-                        const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
-                        return (
-                          <div className="mt-3 rounded-none border border-line bg-paper p-3">
-                            <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                            <ProfileSchemaForm
-                              fields={fields}
-                              value={values}
-                              onChange={(next) => {
-                                const nextDoc = { ...parsed, schema: { fields }, values: next }
-                                setAppDraft(JSON.stringify(nextDoc, null, 2))
-                              }}
-                            />
-                          </div>
-                        )
-                      }
-                    } catch {}
-                    return null
-                  })()}
-
-                  <div className="flex items-center justify-end gap-2">
-                    {appSaveMsg && (
-                      <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>
-                    )}
-                    <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90">
-                      <Save className="mr-2 h-4 w-4" /> Save Profile
-                    </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        )}
+        
 
         {/* NEW: Last session + Opt-out + Newsletters row */}
         <div className="mt-3 flex items-center justify-between rounded-none border border-line bg-[hsl(var(--muted))]/20 px-4 py-3">

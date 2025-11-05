@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { getActiveAccountId } from "@/lib/account-store"
 import { GroupIconInline, normalizeIconKey } from "@/components/group-icon"
-import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
+import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal.v2"
 import { toast } from "@/hooks/use-toast"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 

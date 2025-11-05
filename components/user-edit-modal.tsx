@@ -35,7 +35,7 @@ import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile
 import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ProductTemplatePicker } from "@/components/profiles/product-template-picker"
-import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
+import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal.v2"
 import { toast } from "@/hooks/use-toast"
 
 /* -------------------- types --------------------- */
@@ -581,18 +581,18 @@ export function UserEditModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-paper border border-line text-ink">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-serif text-ink">
-            <UsersIcon className="h-5 w-5" aria-hidden="true" />
+      <DialogContent className="h-[92vh] w-[96vw] max-w-none overflow-y-auto rounded-none border border-line bg-background text-ink shadow-2xl">
+        <DialogHeader className="sticky top-0 z-10 border-b border-line bg-background/95 px-2 py-3 backdrop-blur">
+          <DialogTitle className="flex items-center gap-3 font-serif text-2xl tracking-tight text-ink">
+            <UsersIcon className="h-6 w-6" aria-hidden="true" />
             Edit User: {details?.identifiers?.email_address ?? "…"}
           </DialogTitle>
         </DialogHeader>
 
         {/* Top box: Group + Template */}
-        <Card className="rounded-none border border-line bg-paper">
+        <Card className="mx-2 rounded-md border border-line bg-paper shadow-xl">
           <CardHeader className="pb-2">
-            <CardTitle className="font-serif text-lg text-ink">Apply Group & Template</CardTitle>
+            <CardTitle className="font-serif text-xl font-semibold text-ink">Apply Group & Template</CardTitle>
           </CardHeader>
           <CardContent>
             {/* quick actions */}
@@ -619,22 +619,22 @@ export function UserEditModal({
                 if (key) { setActiveApp(key as ProductKey); loadAppProfile(key as ProductKey) }
               }}
             >
-              <TabsList className="rounded-none bg-[hsl(var(--muted))]/40">
-                <TabsTrigger value="mylaw" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+              <TabsList className="rounded-none border-b border-line bg-transparent">
+                <TabsTrigger value="mylaw" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
                   <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" /> MyLaw {appAvail.mylaw ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                 </TabsTrigger>
                 {grants?.radar !== false && (
-                  <TabsTrigger value="radar" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <TabsTrigger value="radar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
                     <div className="flex items-center gap-2"><RadarIcon className="h-4 w-4" /> Radar {appAvail.radar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                   </TabsTrigger>
                 )}
                 {grants?.compass && (
-                  <TabsTrigger value="compass" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <TabsTrigger value="compass" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
                     <div className="flex items-center gap-2"><CompassIcon className="h-4 w-4" /> Compass {appAvail.compass ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                   </TabsTrigger>
                 )}
                 {grants?.scholar && (
-                  <TabsTrigger value="scholar" className="rounded-none data-[state=active]:bg-paper data-[state=active]:text-ink">
+                  <TabsTrigger value="scholar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:border-b-2 data-[state=active]:border-ink data-[state=active]:bg-paper data-[state=active]:text-ink">
                     <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> Scholar {appAvail.scholar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
                   </TabsTrigger>
                 )}

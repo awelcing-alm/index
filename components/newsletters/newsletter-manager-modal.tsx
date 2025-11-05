@@ -133,9 +133,9 @@ export default function NewsletterManagerModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-none border border-line bg-paper text-ink">
+      <DialogContent className="h-[92vh] w-[96vw] max-w-none overflow-y-auto rounded-none border border-line bg-background text-ink">
         <DialogHeader>
-          <DialogTitle className="font-serif text-lg">
+          <DialogTitle className="font-serif text-2xl">
             Manage Newsletters for {userEmail}
           </DialogTitle>
         </DialogHeader>
@@ -152,9 +152,9 @@ export default function NewsletterManagerModal({
           </Alert>
         )}
 
-        <Card className="mt-2 rounded-none border border-line bg-paper">
+        <Card className="mt-2 rounded-md border border-line bg-paper shadow-xl">
           <CardHeader className="pb-2">
-            <CardTitle className="font-serif text-base">Subscriptions</CardTitle>
+            <CardTitle className="font-serif text-lg">Subscriptions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Toolbar: sticky so the filter stays visible while scrolling */}

@@ -30,6 +30,7 @@ import { toast } from "@/hooks/use-toast"
 import { ProductProfilesSection } from "@/components/user-edit-modal/ProductProfilesSection"
 import { LastSessionBadge } from "@/components/user-edit-modal/LastSessionBadge"
 import { GroupInheritancePreview } from "@/components/user-edit-modal/GroupInheritancePreview"
+import { SaveButton } from "@/components/user-edit-modal/SaveButton"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -461,6 +462,21 @@ export function UserEditModal({
   // Get selected group details for showing what will be inherited
   const selectedGroup = selectedGroupId ? lookups.byId[selectedGroupId] : null
 
+  // Detect what changes will be saved
+  const originalGroup = details ? lookups.resolve(getRawGroupValue(details)) : null
+  const hasGroupChange = selectedGroupId !== originalGroup?.id
+  const hasTemplateChange = !!pendingTpl
+  
+  // Count attribute changes (compare edited vs original)
+  const originalAttrs = details?.attributes || {}
+  const changedAttrs = Object.entries(edited).filter(([key, value]) => {
+    const originalValue = originalAttrs[key]
+    // Consider it changed if values differ and new value isn't empty
+    return value !== "" && value !== originalValue
+  })
+  const hasAttributeChanges = changedAttrs.length > 0
+  const attributeChangeCount = changedAttrs.length
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="h-[92vh] w-[96vw] max-w-none overflow-y-auto rounded-none border border-line bg-background text-ink shadow-2xl">
@@ -712,24 +728,17 @@ export function UserEditModal({
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              onClick={handleSave}
+            <SaveButton
+              saving={saving}
               disabled={saving || !!busyAction}
-              className="rounded-none border-line bg-ink text-paper hover:bg-ink/90"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" aria-hidden="true" />
-                  Save Changes
-                </>
-              )}
-            </Button>
+              hasGroupChange={hasGroupChange}
+              hasTemplateChange={hasTemplateChange}
+              hasAttributeChanges={hasAttributeChanges}
+              attributeChangeCount={attributeChangeCount}
+              newGroupName={selectedGroup?.name}
+              templateName={pendingTpl || undefined}
+              onClick={handleSave}
+            />
           </div>
         </div>
       </DialogContent>

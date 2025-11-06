@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Info, ChevronDown, ChevronRight, Mail, Target, Scale, Compass as CompassIcon, BookOpen, User } from "lucide-react"
+import { Info, ChevronDown, ChevronRight, Mail, Target, Scale, Compass as CompassIcon, BookOpen, User, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { Group } from "@/lib/groups"
 
@@ -12,6 +12,18 @@ type ProductTemplates = {
   mylaw?: string | null
   compass?: string | null
   scholar?: string | null
+}
+
+type TemplateDetails = {
+  name: string
+  fieldCount: number
+}
+
+type ProductTemplateDetails = {
+  radar?: TemplateDetails | null
+  mylaw?: TemplateDetails | null
+  compass?: TemplateDetails | null
+  scholar?: TemplateDetails | null
 }
 
 type Props = {
@@ -62,6 +74,8 @@ function formatDemographics(demographics: Record<string, any>): Array<{ key: str
 
 export function GroupInheritancePreview({ group }: Props) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const [productTemplateDetails, setProductTemplateDetails] = useState<ProductTemplateDetails>({})
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false)
   
   const demographics = group.demographics || {}
   const productTemplates = extractProductTemplates(demographics)
@@ -75,6 +89,53 @@ export function GroupInheritancePreview({ group }: Props) {
   const hasProductTemplates = productTemplateCount > 0
   const hasDemographics = demographicPairs.length > 0
   const hasNothing = !hasNewsletter && !hasProductTemplates && !hasDemographics
+  
+  // Fetch template details when expanded
+  useEffect(() => {
+    if (!isExpanded || !hasProductTemplates) return
+    
+    let alive = true
+    setIsLoadingDetails(true)
+    
+    ;(async () => {
+      try {
+        const details: ProductTemplateDetails = {}
+        
+        // Fetch each product template
+        for (const [product, templateName] of Object.entries(productTemplates)) {
+          if (!templateName) continue
+          
+          const res = await fetch(`/api/product-templates/${product}/${encodeURIComponent(templateName)}`)
+          if (!res.ok) continue
+          
+          const data = await res.json()
+          if (!alive) return
+          
+          // Count non-empty fields in attributes
+          const attributes = data.attributes || {}
+          const fieldCount = Object.keys(attributes).filter(key => {
+            const val = attributes[key]
+            return val != null && val !== "" && val !== false
+          }).length
+          
+          details[product as keyof ProductTemplateDetails] = {
+            name: templateName,
+            fieldCount
+          }
+        }
+        
+        if (alive) {
+          setProductTemplateDetails(details)
+          setIsLoadingDetails(false)
+        }
+      } catch (error) {
+        console.error("Failed to load product template details:", error)
+        if (alive) setIsLoadingDetails(false)
+      }
+    })()
+    
+    return () => { alive = false }
+  }, [isExpanded, hasProductTemplates, productTemplates])
   
   return (
     <Alert className="rounded-none border-blue-200 bg-blue-50">
@@ -160,30 +221,73 @@ export function GroupInheritancePreview({ group }: Props) {
                   <div className="flex items-center gap-1.5 text-xs font-medium text-blue-800">
                     <Target className="h-3.5 w-3.5" />
                     Product Profile Templates ({productTemplateCount})
+                    {isLoadingDetails && (
+                      <Loader2 className="ml-2 h-3 w-3 animate-spin text-blue-600" />
+                    )}
                   </div>
-                  <div className="ml-5 space-y-0.5 text-xs text-blue-700">
+                  <div className="ml-5 space-y-1.5 text-xs text-blue-700">
                     {productTemplates.radar && (
-                      <div className="flex items-center gap-1.5">
-                        <Target className="h-3 w-3 text-purple-600" />
-                        Radar: {productTemplates.radar}
+                      <div className="flex items-start gap-2">
+                        <Target className="mt-0.5 h-3 w-3 flex-shrink-0 text-purple-600" />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-blue-800">Radar:</span>
+                            <span>{productTemplates.radar}</span>
+                            {productTemplateDetails.radar && (
+                              <Badge variant="outline" className="rounded-sm border-purple-300 bg-purple-50 text-purple-700 text-[10px] px-1 py-0">
+                                {productTemplateDetails.radar.fieldCount} fields
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
                     {productTemplates.mylaw && (
-                      <div className="flex items-center gap-1.5">
-                        <Scale className="h-3 w-3 text-green-600" />
-                        MyLaw: {productTemplates.mylaw}
+                      <div className="flex items-start gap-2">
+                        <Scale className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-600" />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-blue-800">MyLaw:</span>
+                            <span>{productTemplates.mylaw}</span>
+                            {productTemplateDetails.mylaw && (
+                              <Badge variant="outline" className="rounded-sm border-green-300 bg-green-50 text-green-700 text-[10px] px-1 py-0">
+                                {productTemplateDetails.mylaw.fieldCount} fields
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
                     {productTemplates.compass && (
-                      <div className="flex items-center gap-1.5">
-                        <CompassIcon className="h-3 w-3 text-orange-600" />
-                        Compass: {productTemplates.compass}
+                      <div className="flex items-start gap-2">
+                        <CompassIcon className="mt-0.5 h-3 w-3 flex-shrink-0 text-orange-600" />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-blue-800">Compass:</span>
+                            <span>{productTemplates.compass}</span>
+                            {productTemplateDetails.compass && (
+                              <Badge variant="outline" className="rounded-sm border-orange-300 bg-orange-50 text-orange-700 text-[10px] px-1 py-0">
+                                {productTemplateDetails.compass.fieldCount} fields
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
                     {productTemplates.scholar && (
-                      <div className="flex items-center gap-1.5">
-                        <BookOpen className="h-3 w-3 text-red-600" />
-                        Scholar: {productTemplates.scholar}
+                      <div className="flex items-start gap-2">
+                        <BookOpen className="mt-0.5 h-3 w-3 flex-shrink-0 text-red-600" />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-blue-800">Scholar:</span>
+                            <span>{productTemplates.scholar}</span>
+                            {productTemplateDetails.scholar && (
+                              <Badge variant="outline" className="rounded-sm border-red-300 bg-red-50 text-red-700 text-[10px] px-1 py-0">
+                                {productTemplateDetails.scholar.fieldCount} fields
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

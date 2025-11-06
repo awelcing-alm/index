@@ -17,7 +17,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { Loader2, Users as UsersIcon, Save, AlertTriangle, Info } from "lucide-react"
+import { Loader2, Users as UsersIcon, Save, AlertTriangle, Info, FileText, Radar } from "lucide-react"
 
 import type { Group } from "@/lib/groups"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
@@ -457,33 +457,35 @@ export function UserEditModal({
   /* ---------------- render ------------------ */
   if (!isOpen) return null
 
+  // Get selected group details for showing what will be inherited
+  const selectedGroup = selectedGroupId ? lookups.byId[selectedGroupId] : null
+  const groupDemographics = selectedGroup?.demographics || {}
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="h-[92vh] w-[96vw] max-w-none overflow-y-auto rounded-none border border-line bg-background text-ink shadow-2xl">
-        <DialogHeader className="sticky top-0 z-0 border-b border-line bg-background/95 px-2 py-3 pr-10 backdrop-blur">
+        <DialogHeader className="sticky top-0 z-10 border-b border-line bg-background/95 px-2 py-3 pr-10 backdrop-blur">
           <DialogTitle className="flex items-center gap-3 font-serif text-2xl tracking-tight text-ink">
             <UsersIcon className="h-6 w-6" aria-hidden="true" />
             Edit User: {details?.identifiers?.email_address ?? "…"}
           </DialogTitle>
         </DialogHeader>
 
-        {/* Top box: Group + Template */}
-        <Card className="mx-2 rounded-md border border-line bg-paper shadow-xl">
-          <CardHeader className="pb-2">
-            <CardTitle className="font-serif text-xl font-semibold text-ink">Apply Group & Template</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {/* quick actions */}
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" onClick={copyUserToTemplate} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Save as Template…</Button>
-              <Button size="sm" variant="outline" onClick={applyTemplatesToThisUser} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Apply Templates…</Button>
-            </div>
-            <ProductProfilesSection userId={details?.user_id} />
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {/* Group */}
+        <div className="space-y-6 px-2 pb-4">
+          {/* SECTION 1: GROUP ASSIGNMENT */}
+          <Card className="rounded-md border-2 border-line bg-paper shadow-lg">
+            <CardHeader className="pb-3 bg-[hsl(var(--muted))]/30">
+              <CardTitle className="flex items-center gap-2 font-serif text-lg font-semibold text-ink">
+                <UsersIcon className="h-5 w-5" />
+                Step 1: Group Assignment
+              </CardTitle>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                Groups automatically apply demographics and may include a default newsletter template
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-[hsl(var(--muted-foreground))]">Assign / Change Group</Label>
+                <Label className="font-medium text-ink">Assign to Group</Label>
                 <Select
                   value={selectedGroupId ?? ""}
                   onValueChange={onChooseGroup}
@@ -505,19 +507,69 @@ export function UserEditModal({
                 </Select>
               </div>
 
-              {/* Template (Newsletter) */}
-              <div className="space-y-2">
-                <Label className="text-[hsl(var(--muted-foreground))]">Apply Newsletter Template</Label>
-                {detectedTemplates.length > 0 && (
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-[hsl(var(--muted-foreground))]">Currently applied:</span>
+              {/* Show what will be inherited from group */}
+              {selectedGroup && (
+                <Alert className="rounded-none border-blue-200 bg-blue-50">
+                  <Info className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-sm text-blue-900">
+                    <div className="font-medium mb-1">This group will apply:</div>
+                    <ul className="list-disc list-inside space-y-1 text-xs">
+                      {selectedGroup.default_template && (
+                        <li>Default newsletter template: <strong>{selectedGroup.default_template}</strong></li>
+                      )}
+                      {Object.keys(groupDemographics).length > 0 && (
+                        <li>Demographics: {Object.entries(groupDemographics).map(([k, v]) => `${k}=${v}`).join(', ')}</li>
+                      )}
+                      {Object.keys(groupDemographics).length === 0 && !selectedGroup.default_template && (
+                        <li>No automatic settings</li>
+                      )}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* SECTION 2: NEWSLETTER TEMPLATES */}
+          <Card className="rounded-md border-2 border-line bg-paper shadow-lg">
+            <CardHeader className="pb-3 bg-[hsl(var(--muted))]/30">
+              <CardTitle className="flex items-center gap-2 font-serif text-lg font-semibold text-ink">
+                <FileText className="h-5 w-5" />
+                Step 2: Newsletter Preferences
+              </CardTitle>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                Newsletter templates control which email newsletters the user receives
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Quick actions */}
+              <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-line">
+                <Button size="sm" variant="outline" onClick={copyUserToTemplate} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">
+                  Save as Template…
+                </Button>
+                <Button size="sm" variant="outline" onClick={applyTemplatesToThisUser} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">
+                  Apply Templates…
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setNewsletterOpen(true)} disabled={!details} className="ml-auto rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">
+                  View Newsletters
+                </Button>
+              </div>
+
+              {detectedTemplates.length > 0 && (
+                <div className="rounded-none border border-green-200 bg-green-50 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-green-900">Currently applied templates:</span>
                     {detectedTemplates.map((name) => (
-                      <Badge key={name} variant="outline" className="rounded-none border-green-500 bg-green-50 text-green-700 px-2 py-0.5 text-xs">
+                      <Badge key={name} variant="outline" className="rounded-none border-green-500 bg-white text-green-700 px-2 py-1">
                         ✓ {name}
                       </Badge>
                     ))}
                   </div>
-                )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label className="font-medium text-ink">Apply Newsletter Template</Label>
                 {tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (
@@ -544,180 +596,177 @@ export function UserEditModal({
                     </SelectContent>
                   </Select>
                 )}
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Newsletter templates are independent of group settings
+                </p>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* SECTION 3: PRODUCT PROFILES (Extended Features) */}
+          <Card className="rounded-md border-2 border-line bg-paper shadow-lg">
+            <CardHeader className="pb-3 bg-[hsl(var(--muted))]/30">
+              <CardTitle className="flex items-center gap-2 font-serif text-lg font-semibold text-ink">
+                <Radar className="h-5 w-5" />
+                Step 3: Product Profiles (Optional)
+              </CardTitle>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                Extended product profiles for personalized content (MyLaw, Radar, Compass, Scholar). These are separate from newsletters.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <ProductProfilesSection userId={details?.user_id} />
+            </CardContent>
+          </Card>
+
+          {/* User Attributes Section - below */}
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin text-ink" />
+              <span className="text-[hsl(var(--muted-foreground))]">Loading…</span>
             </div>
-          </CardContent>
-        </Card>
-        
+          ) : (
+            details && (
+              <Card className="rounded-none border border-line bg-paper">
+                <CardHeader>
+                  <CardTitle className="font-serif text-lg text-ink">User Attributes</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {Object.entries(ATTRIBUTE_SCHEMA).map(([k, s]) => (
+                      <div key={k} className="space-y-2">
+                        <Label className="text-[hsl(var(--muted-foreground))]">{s.label}</Label>
+                        {s.type === "select" ? (
+                          <Select
+                            value={(edited[k] as string) || ""}
+                            onValueChange={(v) => onAttrChange(k, v)}
+                          >
+                            <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
+                              <SelectValue placeholder={`Select ${s.label}…`} />
+                            </SelectTrigger>
+                            <SelectContent className="rounded-none border border-line bg-paper">
+                              {s.options?.map((opt) => (
+                                <SelectItem
+                                  key={opt}
+                                  value={opt}
+                                  className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
+                                >
+                                  {opt}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            type={s.type}
+                            value={(edited[k] as string) ?? ""}
+                            onChange={(e) => onAttrChange(k, e.target.value)}
+                            className="rounded-none border border-line bg-paper text-ink"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
 
-        {/* NEW: Last session + Opt-out + Newsletters row */}
-        <div className="mt-3 flex items-center justify-between rounded-none border border-line bg-[hsl(var(--muted))]/20 px-4 py-3">
-          <div className="flex items-center gap-3">
-            {/* Last session (best-effort) */}
-            {details?.user_id && (
-              <LastSessionBadge userId={details.user_id} />
-            )}
-            <Label className="text-[hsl(var(--muted-foreground))]">Opt Out Status</Label>
-            <Select
-              value={(edited.optout as string) ?? ""}
-              onValueChange={(v) => onAttrChange("optout", v)}
-            >
-              <SelectTrigger className="h-8 w-56 rounded-none border border-line bg-paper text-ink">
-                <SelectValue placeholder="Select status…" />
-              </SelectTrigger>
-              <SelectContent className="rounded-none border border-line bg-paper">
-                <SelectItem value="None" className="rounded-none">None</SelectItem>
-                <SelectItem value="marketing" className="rounded-none">Marketing</SelectItem>
-                <SelectItem value="All" className="rounded-none">All</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+                  {/* Opt-out status */}
+                  <div className="space-y-2 pt-4 border-t border-line">
+                    <Label className="text-[hsl(var(--muted-foreground))]">Opt Out Status</Label>
+                    <Select
+                      value={(edited.optout as string) ?? ""}
+                      onValueChange={(v) => onAttrChange("optout", v)}
+                    >
+                      <SelectTrigger className="h-9 rounded-none border border-line bg-paper text-ink">
+                        <SelectValue placeholder="Select status…" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-none border border-line bg-paper">
+                        <SelectItem value="None" className="rounded-none">None</SelectItem>
+                        <SelectItem value="marketing" className="rounded-none">Marketing</SelectItem>
+                        <SelectItem value="All" className="rounded-none">All</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => details && setNewsletterOpen(true)}
-            disabled={!details}
-            className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
-          >
-            View Newsletters
-          </Button>
-        </div>
-
-        {/* alerts */}
-        {(error || fetchErr) && (
-          <Alert className="mt-4 rounded-none border border-line bg-[hsl(var(--muted))]">
-            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription className="text-ink">{error || fetchErr}</AlertDescription>
-          </Alert>
-        )}
-        {saveErr && (
-          <Alert variant="destructive" className="mt-4 rounded-none">
-            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription>{saveErr}</AlertDescription>
-          </Alert>
-        )}
-        {success && (
-          <Alert className="mt-4 rounded-none border border-line bg-[hsl(var(--secondary))]/20">
-            <Info className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription className="text-ink">{success}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* attributes */}
-        {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin text-ink" />
-            <span className="text-[hsl(var(--muted-foreground))]">Loading…</span>
-          </div>
-        ) : (
-          details && (
-            <Card className="mt-6 rounded-none border border-line bg-paper">
-              <CardHeader>
-                <CardTitle className="font-serif text-lg text-ink">User Attributes</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {Object.entries(ATTRIBUTE_SCHEMA).map(([k, s]) => (
-                    <div key={k} className="space-y-2">
-                      <Label className="text-[hsl(var(--muted-foreground))]">{s.label}</Label>
-                      {s.type === "select" ? (
-                        <Select
-                          value={(edited[k] as string) || ""}
-                          onValueChange={(v) => onAttrChange(k, v)}
-                        >
-                          <SelectTrigger className="rounded-none border border-line bg-paper text-ink">
-                            <SelectValue placeholder={`Select ${s.label}`} />
-                          </SelectTrigger>
-                          <SelectContent className="rounded-none border border-line bg-paper">
-                            {s.options!.map((opt) => (
-                              <SelectItem
-                                key={opt}
-                                value={opt}
-                                className="rounded-none text-ink hover:bg-[hsl(var(--muted))]"
-                              >
-                                {opt}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input
-                          type={s.type}
-                          value={(edited[k] as string) || ""}
-                          onChange={(e) => onAttrChange(k, e.target.value)}
-                          className="rounded-none border border-line bg-paper text-ink placeholder:text-[hsl(var(--muted-foreground))]"
-                        />
-                      )}
+                  {/* Last session badge */}
+                  {details?.user_id && (
+                    <div className="pt-2">
+                      <LastSessionBadge userId={details.user_id} />
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )
-        )}
+                  )}
+                </CardContent>
+              </Card>
+            )
+          )}
 
-        {/* actions */}
-        <div className="mt-6 flex justify-end gap-3 border-t border-line pt-4">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onClose}
-            className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted)))]"
-          >
-            Cancel
-          </Button>
+          {/* Alerts */}
+          {(error || fetchErr) && (
+            <Alert className="rounded-none border border-line bg-[hsl(var(--muted))]">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              <AlertDescription className="text-ink">{error || fetchErr}</AlertDescription>
+            </Alert>
+          )}
+          {saveErr && (
+            <Alert variant="destructive" className="rounded-none">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              <AlertDescription>{saveErr}</AlertDescription>
+            </Alert>
+          )}
+          {success && (
+            <Alert className="rounded-none border border-line bg-[hsl(var(--secondary))]/20">
+              <Info className="h-4 w-4" aria-hidden="true" />
+              <AlertDescription className="text-ink">{success}</AlertDescription>
+            </Alert>
+          )}
 
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={saving || !details}
-            className="rounded-none bg-ink text-paper hover:bg-ink/90 disabled:opacity-70"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                Save Changes
-              </>
-            )}
-          </Button>
+          {/* Action buttons */}
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={saving || !!busyAction}
+              className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !!busyAction}
+              className="rounded-none border-line bg-ink text-paper hover:bg-ink/90"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-
-        {/* Newsletter modal (render only when details are loaded) */}
-        {details && (
-          <NewsletterManagerModal
-            isOpen={newsletterOpen}
-            onClose={() => setNewsletterOpen(false)}
-            userId={details.user_id}
-            userEmail={details.identifiers?.email_address || ""}
-            existingAttributes={details.attributes}
-            effectiveFromTemplates={effectiveFromTemplates || undefined}
-          />
-        )}
-
-        {/* Apply Templates modal */}
-        {details && (
-          <ApplyTemplatesModal
-            open={applyOpen}
-            onOpenChange={(v) => setApplyOpen(v)}
-            target={{ type: "user", ids: [details.user_id] }}
-            baseUserId={details.user_id}
-            onApplied={({ wrote }) => {
-              setSuccess(`Templates processed; wrote ${wrote} fields`)
-              // refresh effective stack
-              setTplStack((prev) => prev)
-              toast({ title: "Templates processed", description: `${wrote} field${wrote === 1 ? "" : "s"} written.` })
-            }}
-          />
-        )}
       </DialogContent>
+
+      {/* Modals */}
+      {newsletterOpen && details && (
+        <NewsletterManagerModal
+          isOpen={newsletterOpen}
+          onClose={() => setNewsletterOpen(false)}
+          userId={details.user_id}
+          userEmail={details.identifiers.email_address}
+        />
+      )}
+
+      {applyOpen && details && (
+        <ApplyTemplatesModal
+          open={applyOpen}
+          onOpenChange={(open) => setApplyOpen(open)}
+          target={{ type: "user", ids: [details.user_id] }}
+        />
+      )}
     </Dialog>
   )
 }
-
-// moved to components/user-edit-modal/LastSessionBadge

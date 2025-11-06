@@ -10,6 +10,8 @@ import React, {
   useRef,
   type DragEvent,
 } from "react"
+import { useUsersData } from "@/hooks/use-users-data"
+import { createUserColumns } from "@/components/pages/users-table/columns"
 
 import {
   useReactTable,
@@ -182,13 +184,24 @@ export default function UsersTable({
   const [, startTransition] = useTransition()
 
   // Extended Profile availability & filter (Radar/MyLaw/Compass/Scholar)
-  const [profilesByUser, setProfilesByUser] = useState<Record<string, { radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>>({})
   const [profileFilter, setProfileFilter] = useState<{ radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean }>({})
-  const [productGrants, setProductGrants] = useState<{ radar?: boolean; mylaw?: boolean; compass?: boolean; scholar?: boolean } | null>(null)
   // Last session column/filter and column visibility
-  const [sessionsByUser, setSessionsByUser] = useState<Record<string, { lastSession?: string; count?: number }>>({})
-  const [lastSessionFilter, setLastSessionFilter] = useState<string>("")
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({})
+  const [lastSessionFilter, setLastSessionFilter] = useState<string>("")
+
+  // extracted data & effects (product grants, memberships, profiles, sessions)
+  const {
+    profilesByUser,
+    setProfilesByUser,
+    productGrants,
+    sessionsByUser,
+    setSessionsByUser,
+    membershipByUser,
+    setMembershipByUser,
+    refreshMemberships,
+    reprobeProfiles,
+    reprobeSessions,
+  } = useUsersData({ users, groups })
 
   /* template names (defaults + custom) */
   const [templateNames, setTemplateNames] = useState<string[]>([])
@@ -243,82 +256,11 @@ export default function UsersTable({
   )
 
   // Load product grants once to decide which profile icons/filters to show
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        const res = await fetch("/api/templates/products/grants", { cache: "no-store", headers: { Accept: "application/json" } })
-        const payload = await res.json().catch(() => ({}))
-        const g = payload?.grants || {}
-        if (!alive) return
-        // MyLaw is available for all users; force-enable in UI
-        setProductGrants({ radar: !!g.radar, mylaw: true, compass: !!g.compass, scholar: !!g.scholar })
-      } catch {
-        if (alive) setProductGrants({ radar: false, mylaw: true, compass: false, scholar: false })
-      }
-    })()
-    return () => { alive = false }
-  }, [])
-
-  /* ----------- MEMBERSHIP HYDRATION (GLOBAL) ----------- */
-  const [membershipByUser, setMembershipByUser] = useState<Record<string, Membership>>({})
-  const hydratedAllRef = useRef(false)
-
-  // Batch-membership load so filters work before visiting pages
-  useEffect(() => {
-    if (!users?.length) {
-      hydratedAllRef.current = true
-      setMembershipByUser({})
-      return
-    }
-    const CHUNK = 200
-    let cancelled = false
-
-    ;(async () => {
-      const userIds = users.map((u) => u.user_id)
-      const chunks: string[][] = []
-      for (let i = 0; i < userIds.length; i += CHUNK) {
-        chunks.push(userIds.slice(i, i + CHUNK))
-      }
-
-      const aggregate: Record<string, Membership> = {}
-      for (const ids of chunks) {
-        if (cancelled) return
-        const qs = encodeURIComponent(ids.join(","))
-        const { res, data } = await fetchJson(`/api/groups/membership?user_ids=${qs}`)
-        if (!res.ok || !data?.ok) continue
-        Object.assign(aggregate, data.memberships || {})
-      }
-
-      if (cancelled) return
-
-      hydratedAllRef.current = true
-      setMembershipByUser(aggregate)
-
-      // Merge into rows so filtering sees group_id for *all* rows
-      setRows((prev) =>
-        prev.map((u) => {
-          const m = aggregate[u.user_id]
-          return m
-            ? {
-                ...u,
-                group_id: m.group_id,
-                group_icon: m.icon,
-                group_name: m.name ?? undefined,
-              }
-            : u
-        }),
-      )
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [users])
+  /* membership/profiles/sessions hydration handled by useUsersData */
 
   /* ----------- resolve group for a row (uses membership map first) ----------- */
   const resolveGroupForRow = useCallback(
-    (row: UiUser): GroupWithCount | null => {
+    (row: any): any | null => {
       const m = membershipByUser[row.user_id]
       if (m?.group_id && groupById[m.group_id]) return groupById[m.group_id]
 
@@ -348,56 +290,10 @@ export default function UsersTable({
   }, [groups])
 
   /* ----------- PAGE hydration (kept for freshness; cheap) ----------- */
-  const refreshMemberships = useCallback(async (userIds: string[]) => {
-    if (!userIds.length) return
-    try {
-      const qs = encodeURIComponent(userIds.join(","))
-      const res = await fetch(`/api/groups/membership?user_ids=${qs}`, {
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      })
-      if (!res.ok) return
-      const payload = (await res.json()) as { ok: boolean; memberships: Record<string, Membership> }
-      if (!payload?.ok) return
-      const byUser = payload.memberships || {}
-
-      // cache + rows
-      startTransition(() => {
-        setMembershipByUser((prev) => ({ ...prev, ...byUser }))
-        setRows((prev) =>
-          prev.map((u) => {
-            const m = byUser[u.user_id]
-            return m
-              ? {
-                  ...u,
-                  group_id: m.group_id,
-                  group_icon: m.icon,
-                  group_name: m.name ?? undefined,
-                }
-              : u
-          }),
-        )
-      })
-    } catch (e) {
-      console.error("refreshMemberships failed", e)
-    }
-  }, [])
+  // refreshMemberships provided by hook
 
   // Explicitly re-probe Extended Profile availability for a list of users
-  const reprobeProfiles = useCallback(async (userIds: string[]) => {
-    if (!userIds.length) return
-    try {
-      const qs = encodeURIComponent(userIds.join(","))
-      const res = await fetch(`/api/users/extended-profiles/availability?user_ids=${qs}`, {
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      })
-      if (!res.ok) return
-      const payload = await res.json().catch(() => null)
-      const map = (payload && payload.availability) || {}
-      setProfilesByUser((prev) => ({ ...prev, ...map }))
-    } catch {}
-  }, [])
+  // reprobeProfiles provided by hook
 
   /* ================== table ================== */
   const PER_PAGE = 25
@@ -450,208 +346,14 @@ export default function UsersTable({
     })
   }
 
-  const col = createColumnHelper<UiUser>()
-  const columns: ColumnDef<UiUser, any>[] = [
-    {
-      id: "select",
-      header: ({ table }) => (
-        <Checkbox
-          className="rounded-none"
-          checked={
-            (table as any).getIsAllPageRowsSelected?.() ??
-            table.getRowModel().rows.every((r) => r.getIsSelected())
-          }
-          onCheckedChange={(v) => setAllOnPage(v === true, table)}
-          aria-label="Select all on page"
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          className="rounded-none"
-          checked={row.getIsSelected()}
-          onCheckedChange={(v) => row.toggleSelected(v === true)}
-          aria-label={`Select ${row.original.identifiers?.email_address}`}
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-      size: 36,
-    },
-    col.display({
-      id: "name",
-      header: () => <span className="text-ink">User</span>,
-      cell: ({ row }) => {
-        const u = row.original
-        const fn = u.attributes?.firstname || ""
-        const ln = u.attributes?.lastname || u.attributes?.surname || ""
-        const displayName =
-          fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address.split("@")[0]
-        return <span className="font-medium text-ink">{displayName}</span>
-      },
-      sortingFn: (a, b) => {
-        const get = (u: UiUser) => {
-          const fn = u.attributes?.firstname || ""
-          const ln = u.attributes?.lastname || u.attributes?.surname || ""
-          return (fn || ln ? `${fn} ${ln}`.trim() : u.identifiers.email_address).toLowerCase()
-        }
-        return get(a.original).localeCompare(get(b.original))
-      },
-    }),
-    col.accessor((u) => u.identifiers.email_address, {
-      id: "email",
-      header: () => <span className="text-ink">Email</span>,
-      cell: (ctx) => {
-        const email = ctx.getValue() as string
-        return (
-          <button
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(email)
-              } catch {}
-            }}
-            className="underline decoration-dotted text-[hsl(var(--muted-foreground))] hover:opacity-80"
-            title="Click to copy"
-            type="button"
-          >
-            {email}
-          </button>
-        )
-      },
-      enableColumnFilter: true,
-      filterFn: "includesString",
-    }),
-    col.display({
-      id: "group",
-      header: () => <span className="text-ink">Group</span>,
-      cell: ({ row }) => {
-        const u = row.original
-        const g = resolveGroupForRow(u)
-        const iconId = (u.group_icon ?? g?.icon ?? "folder") as string
-        const title = g?.name ?? u.group_name ?? "Group"
-        const color = g?.color ?? undefined
-        return <GroupIconInline icon={iconId} color={color} title={title} className="h-4 w-4" />
-      },
-      enableColumnFilter: true,
-      filterFn: (row, _id, value: string) => {
-        if (!value) return true
-        const g = resolveGroupForRow(row.original)
-        return (g?.id ?? "") === value
-      },
-    }),
-    col.accessor((u) => (u.user_type === "owner" ? "Owner" : "User"), {
-      id: "role",
-      header: () => <span className="text-ink">Role</span>,
-      cell: ({ getValue }) => {
-        const label = getValue() as string
-        return label === "Owner" ? (
-          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-            <Crown className="h-3 w-3" /> Owner
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="gap-1 rounded-none border-line text-ink">
-            <UserIcon className="h-3 w-3" /> User
-          </Badge>
-        )
-      },
-      enableColumnFilter: false,
-    }),
-    col.display({
-      id: "profiles",
-      header: () => <span className="text-ink">Profiles</span>,
-      cell: ({ row }) => {
-        const f = profilesByUser[row.original.user_id] || {}
-        const iconCls = (on?: boolean) =>
-          [
-            "h-4 w-4",
-            on ? "text-ink" : "text-[hsl(var(--muted-foreground))] opacity-50",
-          ].join(" ")
-        const keys = (productGrants ? (Object.entries(productGrants).filter(([, on]) => on).map(([k]) => k)) : []) as (keyof typeof f)[]
-        return (
-          <div className="flex items-center gap-2">
-            <span className="sr-only">Profiles</span>
-            {keys.includes("radar" as any) && (
-              <span
-                title={f.radar ? "Radar profile available" : "No Radar profile"}
-                className={f.radar ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
-              >
-                <RadarIcon className={iconCls(f.radar)} />
-              </span>
-            )}
-            {keys.includes("mylaw" as any) && (
-              <span
-                title={f.mylaw ? "MyLaw profile available" : "No MyLaw profile"}
-                className={f.mylaw ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
-              >
-                <BookOpen className={iconCls(f.mylaw)} />
-              </span>
-            )}
-            {keys.includes("compass" as any) && (
-              <span
-                title={f.compass ? "Compass profile available" : "No Compass profile"}
-                className={f.compass ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
-              >
-                <CompassIcon className={iconCls(f.compass)} />
-              </span>
-            )}
-            {keys.includes("scholar" as any) && (
-              <span
-                title={f.scholar ? "Scholar profile available" : "No Scholar profile"}
-                className={f.scholar ? "rounded-sm ring-1 ring-ink/25 p-0.5" : undefined}
-              >
-                <GraduationCap className={iconCls(f.scholar)} />
-              </span>
-            )}
-          </div>
-        )
-      },
-      enableSorting: false,
-      enableColumnFilter: false,
-      size: 120,
-    }),
-    col.display({
-      id: "lastSession",
-      header: () => <span className="text-ink">Last Session</span>,
-      cell: ({ row }) => {
-        const iso = sessionsByUser[row.original.user_id]?.lastSession
-        if (!iso) return <span className="text-[hsl(var(--muted-foreground))]">—</span>
-        const d = new Date(iso)
-        const diff = Date.now() - d.getTime()
-        const days = Math.floor(diff / (24 * 60 * 60 * 1000))
-        const label = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`
-        return <span className="text-ink">{label}</span>
-      },
-      enableColumnFilter: false,
-      size: 120,
-    }),
-    col.display({
-      id: "sessions",
-      header: () => <span className="text-ink">Sessions</span>,
-      cell: ({ row }) => {
-        const c = sessionsByUser[row.original.user_id]?.count
-        return <span className="text-ink">{typeof c === "number" ? c : "—"}</span>
-      },
-      enableColumnFilter: false,
-      size: 90,
-    }),
-    col.display({
-      id: "edit",
-      header: () => <span className="text-ink">Edit</span>,
-      cell: ({ row }) => {
-        const u = row.original
-        return (
-          <UserEditButton
-            userId={u.user_id}
-            userEmail={u.identifiers.email_address}
-            existingAttributes={u.attributes}
-            groups={groups}
-          />
-        )
-      },
-      enableSorting: false,
-      enableColumnFilter: false,
-      size: 72,
-    }),
-  ]
+  const columns = createUserColumns({
+    resolveGroupForRow,
+    profilesByUser,
+    productGrants,
+    sessionsByUser,
+    setAllOnPage,
+    groups,
+  })
 
   const table = useReactTable({
     data: rows,

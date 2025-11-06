@@ -17,26 +17,18 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import {
-  Loader2, Users as UsersIcon, Save, AlertTriangle, Info,
-  Radar as RadarIcon, Compass as CompassIcon, GraduationCap, BookOpen,
-} from "lucide-react"
+import { Loader2, Users as UsersIcon, Save, AlertTriangle, Info } from "lucide-react"
 
 import type { Group } from "@/lib/groups"
 import { DEFAULT_TEMPLATES } from "@/lib/template-defaults"
 import { updateUserAttributesAction } from "@/lib/user-actions"
 import NewsletterManagerModal from "@/components/newsletters/newsletter-manager-modal"
 import type { ProductKey } from "@/lib/product-templates"
-import { sanitizeMyLawProfile, describeMyLaw, sanitizeRadarProfile, describeRadar } from "@/lib/product-profiles"
-import { MYLAW_TOPIC_RECS, MYLAW_REGION_RECS } from "@/lib/mylaw-taxonomy"
-import { ProfilePreferencesEditor } from "@/components/profiles/profile-preferences-editor"
 import React from "react"
-import { ProfileSchemaForm, type FieldSpec } from "@/components/profiles/profile-schema-form"
-import { PRODUCT_SCHEMAS } from "@/lib/product-schemas"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { ProductTemplatePicker } from "@/components/profiles/product-template-picker"
 import { ApplyTemplatesModal } from "@/components/templates/apply-templates-modal"
 import { toast } from "@/hooks/use-toast"
+import { ProductProfilesSection } from "@/components/user-edit-modal/ProductProfilesSection"
+import { LastSessionBadge } from "@/components/user-edit-modal/LastSessionBadge"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -221,17 +213,7 @@ export function UserEditModal({
     } catch {}
   }, [isOpen])
 
-  // Extended Profile app availability + editor
-  const [appAvail, setAppAvail] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean }>({})
-  const [appErr, setAppErr] = useState<string | null>(null)
-  const [activeApp, setActiveApp] = useState<ProductKey | null>(null)
-  const [appLoading, setAppLoading] = useState(false)
-  const [appDraft, setAppDraft] = useState<string>("")
-  const [appSaveMsg, setAppSaveMsg] = useState<string | null>(null)
-  const [openProduct, setOpenProduct] = useState<ProductKey | "">("")
-  const [productTpls, setProductTpls] = useState<{ radar: string[]; compass: string[]; scholar: string[]; mylaw: string[] }>({ radar: [], compass: [], scholar: [], mylaw: [] })
-  const [grants, setGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
-  const [selectedProductTemplate, setSelectedProductTemplate] = useState<Partial<Record<ProductKey, string>>>({})
+  // Product profiles handled in ProductProfilesSection
 
   const details = userDetails
 
@@ -280,62 +262,7 @@ export function UserEditModal({
     return () => { alive = false }
   }, [isOpen, details?.user_id, tplStack])
 
-  // Load product template names + account grants
-  useEffect(() => {
-    if (!isOpen) return
-    let alive = true
-    ;(async () => {
-      try {
-        const [radar, compass, scholar, mylaw] = await Promise.all([
-          fetch("/api/product-templates/radar", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-          fetch("/api/product-templates/compass", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-          fetch("/api/product-templates/scholar", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-          fetch("/api/product-templates/mylaw", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-        ])
-        if (!alive) return
-        setProductTpls({
-          radar: (Array.isArray(radar) ? radar : []).filter(Boolean).sort(),
-          compass: (Array.isArray(compass) ? compass : []).filter(Boolean).sort(),
-          scholar: (Array.isArray(scholar) ? scholar : []).filter(Boolean).sort(),
-          mylaw: (Array.isArray(mylaw) ? mylaw : []).filter(Boolean).sort(),
-        })
-      } catch {
-        if (alive) setProductTpls({ radar: [], compass: [], scholar: [], mylaw: [] })
-      }
-      try {
-        const r = await fetch("/api/templates/products/grants", { cache: "no-store" })
-        const p = await r.json().catch(() => ({}))
-        if (!alive) return
-        const g = p?.grants || {}
-        setGrants({ radar: !!g.radar, compass: !!g.compass, scholar: !!g.scholar, mylaw: true })
-      } catch {
-        if (alive) setGrants({ radar: false, compass: false, scholar: false, mylaw: true })
-      }
-    })()
-    return () => { alive = false }
-  }, [isOpen])
-
-  // probe Extended Profile app availability when opening and user is loaded
-  useEffect(() => {
-    if (!isOpen || !details?.user_id) return
-    let alive = true
-    setAppErr(null)
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles`, { cache: "no-store" })
-        if (!res.ok) throw new Error(await res.text())
-        const payload = await res.json()
-        const a = payload?.availability || {}
-        if (!alive) return
-  setAppAvail({ radar: !!a.radar?.exists, compass: !!a.compass?.exists, scholar: !!a.scholar?.exists, mylaw: !!a.mylaw?.exists })
-      } catch (e: any) {
-        if (!alive) return
-        setAppErr(e?.message || "Failed to check app profiles")
-        setAppAvail({})
-      }
-    })()
-    return () => { alive = false }
-  }, [isOpen, details?.user_id])
+  // Product profiles moved
 
   /* --- initialise form values from user --- */
   useEffect(() => {
@@ -491,90 +418,7 @@ export function UserEditModal({
     }
   }
 
-  // load a specific app profile
-  const loadAppProfile = async (key: ProductKey) => {
-    if (!details?.user_id) return
-    setActiveApp(key)
-    setAppLoading(true)
-    setAppSaveMsg(null)
-    try {
-      const res = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles/${key}`, { cache: "no-store" })
-      if (!res.ok) throw new Error(await res.text())
-      const payload = await res.json()
-      const data = payload?.data ?? null
-      const text = data ? JSON.stringify(data, null, 2) : "{}"
-      setAppDraft(text)
-    } catch (e: any) {
-      setAppDraft("{}")
-      setAppErr(e?.message || "Failed to load profile")
-    } finally {
-      setAppLoading(false)
-    }
-  }
-
-  const applyProductTemplateToDraft = async (product: ProductKey, name: string) => {
-    if (!name) return
-    try {
-      const res = await fetch(`/api/product-templates/${product}/${encodeURIComponent(name)}`, { cache: "no-store" })
-      if (!res.ok) throw new Error(await res.text())
-      const payload = await res.json().catch(() => null)
-      let attrs = (payload && payload.attributes) || {}
-      // For MyLaw/Radar use raw values (or values within schema wrapper)
-      if (product === "mylaw" || product === "radar") {
-        if (attrs && typeof attrs === 'object' && (attrs as any).schema && (attrs as any).values) {
-          attrs = (attrs as any).values
-        }
-        setAppDraft(JSON.stringify(attrs || {}, null, 2))
-      } else {
-        // Compass/Scholar: ensure { schema, values }
-        if (!(attrs && typeof attrs === 'object' && 'schema' in attrs)) {
-          const schema = PRODUCT_SCHEMAS[product]?.schema || { fields: [] }
-          attrs = { schema, values: attrs || {} }
-        }
-        setAppDraft(JSON.stringify(attrs, null, 2))
-      }
-      setSelectedProductTemplate((p) => ({ ...p, [product]: name }))
-    } catch (e) {
-      setAppSaveMsg((e as any)?.message || "Failed to load template")
-      setTimeout(() => setAppSaveMsg(null), 2500)
-    }
-  }
-
-  const saveAppProfile = async () => {
-    if (!details?.user_id || !activeApp) return
-    setAppLoading(true)
-    setAppSaveMsg(null)
-    try {
-      let parsed: any = {}
-      try { parsed = appDraft ? JSON.parse(appDraft) : {} } catch {
-        setAppSaveMsg("Invalid JSON")
-        setAppLoading(false)
-        return
-      }
-      const res = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles/${activeApp}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      setAppSaveMsg("Profile saved")
-      // refresh availability (profile now exists)
-      setAppAvail((p) => ({ ...p, [activeApp]: true }))
-      // reload profile to reflect server-side normalization
-      try {
-        const re = await fetch(`/api/users/${encodeURIComponent(details.user_id)}/extended-profiles/${activeApp}`, { cache: "no-store" })
-        const payload = await re.json().catch(() => null)
-        const data = payload?.data ?? null
-        const text = data ? JSON.stringify(data, null, 2) : "{}"
-        setAppDraft(text)
-      } catch {}
-    } catch (e: any) {
-      setAppSaveMsg(e?.message || "Failed to save")
-    } finally {
-      setAppLoading(false)
-      setTimeout(() => setAppSaveMsg(null), 2500)
-    }
-  }
+  // Product profiles moved
 
   /* ---------------- render ------------------ */
   if (!isOpen) return null
@@ -600,273 +444,7 @@ export function UserEditModal({
               <Button size="sm" variant="outline" onClick={copyUserToTemplate} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Save as Template…</Button>
               <Button size="sm" variant="outline" onClick={applyTemplatesToThisUser} disabled={!details || !!busyAction} className="rounded-none border-line text-ink hover:bg-[hsl(var(--muted))]">Apply Templates…</Button>
             </div>
-            {/* Profile tabs (like editor tabs) */}
-            <div className="mb-2 text-sm text-[hsl(var(--muted-foreground))]">Profiles</div>
-            <Tabs
-              value={openProduct || ""}
-              onValueChange={(v) => {
-                const key = (v || "") as ProductKey | ""
-                // toggle behavior: clicking active tab closes it
-                if (key && key === openProduct) {
-                  setOpenProduct("")
-                  setActiveApp(null)
-                  return
-                }
-                setOpenProduct(key)
-                if (key) { setActiveApp(key as ProductKey); loadAppProfile(key as ProductKey) }
-              }}
-            >
-              <TabsList className="rounded-none border-b border-line bg-transparent">
-                <TabsTrigger value="mylaw" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
-                  <div className="flex items-center gap-2"><BookOpen className="h-4 w-4" /> MyLaw {appAvail.mylaw ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
-                </TabsTrigger>
-                {grants?.radar !== false && (
-                  <TabsTrigger value="radar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
-                    <div className="flex items-center gap-2"><RadarIcon className="h-4 w-4" /> Radar {appAvail.radar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
-                  </TabsTrigger>
-                )}
-                {grants?.compass && (
-                  <TabsTrigger value="compass" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
-                    <div className="flex items-center gap-2"><CompassIcon className="h-4 w-4" /> Compass {appAvail.compass ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
-                  </TabsTrigger>
-                )}
-                {grants?.scholar && (
-                  <TabsTrigger value="scholar" className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
-                    <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4" /> Scholar {appAvail.scholar ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
-                  </TabsTrigger>
-                )}
-              </TabsList>
-
-              {/* MyLaw */}
-              <TabsContent value="mylaw">
-                {activeApp === "mylaw" && (
-                  <div className="space-y-4">
-                    <ProductTemplatePicker
-                      product="mylaw"
-                      templates={productTpls.mylaw}
-                      value={selectedProductTemplate.mylaw}
-                      onApply={applyProductTemplateToDraft}
-                      label="Apply MyLaw Template"
-                    />
-                    <div className="rounded-none border border-line bg-paper p-3">
-                      {(() => {
-                        try {
-                          const raw = JSON.parse(appDraft || "{}")
-                          const normalized = sanitizeMyLawProfile(raw)
-                          const view = describeMyLaw(normalized)
-                          return (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
-                              <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
-                            </div>
-                          )
-                        } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid MyLaw JSON</div> }
-                      })()}
-                    </div>
-                    {/* Recommended (MyLaw): Topics & Regions */}
-                    <div className="rounded-none border border-line bg-paper p-3">
-                      <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
-                      <div className="flex flex-wrap gap-2">
-                        {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
-                          const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
-                          const prefs = (raw as any)?.preferences || {}
-                          const arr: any[] = Array.isArray(prefs.topics) ? prefs.topics : []
-                          const name = String(t.name)
-                          const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
-                          const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
-                          return (
-                            <button key={t.name} type="button" onClick={() => {
-                              const next = { ...(raw || {}) } as any
-                              next.preferences = next.preferences || {}
-                              const list: any[] = Array.isArray(next.preferences.topics) ? next.preferences.topics : []
-                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
-                              if (idx >= 0) list.splice(idx, 1)
-                              else list.push({ name })
-                              next.preferences.topics = list
-                              setAppDraft(JSON.stringify(next, null, 2))
-                            }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
-                          )
-                        })}
-                      </div>
-                      <div className="mt-3 mb-2 text-sm font-medium text-ink">Recommended Regions</div>
-                      <div className="flex flex-wrap gap-2">
-                        {MYLAW_REGION_RECS.map((r) => {
-                          const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
-                          const prefs = (raw as any)?.preferences || {}
-                          const arr: any[] = Array.isArray(prefs.regions) ? prefs.regions : []
-                          const name = String(r.name)
-                          const selected = !!arr.find((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
-                          const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
-                          return (
-                            <button key={r.name} type="button" onClick={() => {
-                              const next = { ...(raw || {}) } as any
-                              next.preferences = next.preferences || {}
-                              const list: any[] = Array.isArray(next.preferences.regions) ? next.preferences.regions : []
-                              const idx = list.findIndex((x: any) => String(x?.name || "").toLowerCase() === name.toLowerCase())
-                              if (idx >= 0) list.splice(idx, 1)
-                              else list.push({ name })
-                              next.preferences.regions = list
-                              setAppDraft(JSON.stringify(next, null, 2))
-                            }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{r.name}</button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <div className="rounded-none border border-line bg-paper p-3">
-                      <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
-                      <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
-                    </div>
-                    {(() => {
-                      try {
-                        const parsed = appDraft ? JSON.parse(appDraft) : {}
-                        const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
-                        if (fields && fields.length) {
-                          const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
-                          return (
-                            <div className="rounded-none border border-line bg-paper p-3">
-                              <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                              <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
-                            </div>
-                          )
-                        }
-                      } catch {}
-                      return null
-                    })()}
-                    <div className="flex items-center justify-end gap-2">
-                      {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
-                      <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
-                    </div>
-                  </div>
-                )}
-              </TabsContent>
-
-              {/* Radar */}
-              {grants?.radar !== false && (
-                <TabsContent value="radar">
-                  {activeApp === "radar" && (
-                    <div className="space-y-4">
-                      <ProductTemplatePicker
-                        product="radar"
-                        templates={productTpls.radar}
-                        value={selectedProductTemplate.radar}
-                        onApply={applyProductTemplateToDraft}
-                        label="Apply Radar Template"
-                      />
-                      <div className="rounded-none border border-line bg-paper p-3">
-                        {(() => {
-                          try {
-                            const raw = JSON.parse(appDraft || "{}")
-                            const normalized = sanitizeRadarProfile(raw)
-                            const view = describeRadar(normalized)
-                            return (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge variant="outline" className="rounded-none border-line bg-[hsl(var(--muted))]/40 text-ink">Updated: {view.lastUpdated || "—"}</Badge>
-                                <Badge variant="outline" className="rounded-none border-line text-ink">Onboarding: {view.onBoardingStatus || "—"}</Badge>
-                              </div>
-                            )
-                          } catch { return <div className="text-xs text-[hsl(var(--muted-foreground))]">Invalid Radar JSON</div> }
-                        })()}
-                      </div>
-                      <div className="rounded-none border border-line bg-paper p-3">
-                        <h4 className="mb-2 font-medium text-ink">Edit Preferences</h4>
-                        <ProfilePreferencesEditor jsonText={appDraft} onJsonChange={(next) => setAppDraft(next)} />
-                      </div>
-                      <div className="rounded-none border border-line bg-paper p-3">
-                        <div className="mb-2 text-sm font-medium text-ink">Recommended Topics</div>
-                        <div className="flex flex-wrap gap-2">
-                          {MYLAW_TOPIC_RECS.slice(0, 30).map((t) => {
-                            const raw = (() => { try { return JSON.parse(appDraft || "{}") } catch { return {} } })()
-                            const userData = (raw as any)?.data?.userData || (raw as any)?.userData || raw
-                            const arr: any[] = Array.isArray((userData as any)?.followedEntities) ? (userData as any).followedEntities : []
-                            const id = String((t as any).id || (t as any).mylawId || "")
-                            const selected = !!arr.find((x: any) => String(x?.id || "") === id)
-                            const cls = selected ? "bg-ink text-paper" : "border-line text-ink hover:bg-[hsl(var(--muted))]"
-                            return (
-                              <button key={t.name} type="button" onClick={() => {
-                                const next = { ...(raw || {}) } as any
-                                const u = (next.data && next.data.userData) ? next.data.userData : (next.userData || (next.userData = {}))
-                                u.followedEntities = Array.isArray(u.followedEntities) ? u.followedEntities : []
-                                const idx = u.followedEntities.findIndex((x: any) => String(x?.id || "") === id)
-                                if (idx >= 0) u.followedEntities.splice(idx, 1)
-                                else u.followedEntities.push({ id, name: String(t.name), type: "topic" })
-                                if (next.data && next.data.userData) next.data.userData = u
-                                else next.userData = u
-                                setAppDraft(JSON.stringify(next, null, 2))
-                              }} className={["rounded-none border px-2 py-1 text-xs", cls].join(" ")}>{selected ? "✓ " : "+ "}{t.name}</button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      {(() => {
-                        try {
-                          const parsed = appDraft ? JSON.parse(appDraft) : {}
-                          const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
-                          if (fields && fields.length) {
-                            const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
-                            return (
-                              <div className="rounded-none border border-line bg-paper p-3">
-                                <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
-                              </div>
-                            )
-                          }
-                        } catch {}
-                        return null
-                      })()}
-                      <div className="flex items-center justify-end gap-2">
-                        {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
-                        <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
-                      </div>
-                    </div>
-                  )}
-                </TabsContent>
-              )}
-
-              {/* Compass */}
-              {grants?.compass && (
-                <TabsContent value="compass">
-                  {activeApp === "compass" && (
-                    <div className="space-y-4">
-                      <ProductTemplatePicker
-                        product="compass"
-                        templates={productTpls.compass}
-                        value={selectedProductTemplate.compass}
-                        onApply={applyProductTemplateToDraft}
-                        label="Apply Compass Template"
-                      />
-                      {(() => {
-                        try {
-                          const parsed = appDraft ? JSON.parse(appDraft) : {}
-                          const fields: FieldSpec[] | undefined = Array.isArray(parsed?.schema?.fields) ? parsed.schema.fields : (Array.isArray(parsed?.fields) ? parsed.fields : undefined)
-                          if (fields && fields.length) {
-                            const values: Record<string, any> = (parsed?.values && typeof parsed.values === "object") ? parsed.values : (parsed && parsed.schema ? {} : parsed)
-                            return (
-                              <div className="rounded-none border border-line bg-paper p-3">
-                                <h4 className="mb-2 font-medium text-ink">Edit Fields</h4>
-                                <ProfileSchemaForm fields={fields as FieldSpec[]} value={values} onChange={(next) => { const nextDoc = { ...parsed, schema: { fields }, values: next }; setAppDraft(JSON.stringify(nextDoc, null, 2)) }} />
-                              </div>
-                            )
-                          }
-                        } catch {}
-                        return <div className="text-xs text-[hsl(var(--muted-foreground))]">No schema</div>
-                      })()}
-                      <div className="flex items-center justify-end gap-2">
-                        {appSaveMsg && <span className="text-sm text-[hsl(var(--muted-foreground))]">{appSaveMsg}</span>}
-                        <Button size="sm" onClick={saveAppProfile} className="rounded-none bg-ink text-paper hover:bg-ink/90"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
-                      </div>
-                    </div>
-                  )}
-                </TabsContent>
-              )}
-
-              {/* Scholar placeholder */}
-              {grants?.scholar && (
-                <TabsContent value="scholar" />
-              )}
-            </Tabs>
-            {appErr && (
-              <span className="mt-2 block text-xs text-[hsl(var(--destructive))]">{appErr}</span>
-            )}
+            <ProductProfilesSection userId={details?.user_id} />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Group */}
@@ -893,19 +471,10 @@ export function UserEditModal({
                 </Select>
               </div>
 
-              {/* Template (Newsletter or Active Product) */}
+              {/* Template (Newsletter) */}
               <div className="space-y-2">
-                <Label className="text-[hsl(var(--muted-foreground))]">
-                  {activeApp ? `Apply ${activeApp[0].toUpperCase() + activeApp.slice(1)} Template` : "Apply Newsletter Template"}
-                </Label>
-                {activeApp ? (
-                  <ProductTemplatePicker
-                    product={activeApp}
-                    templates={productTpls[activeApp] || []}
-                    value={selectedProductTemplate[activeApp]}
-                    onApply={applyProductTemplateToDraft}
-                  />
-                ) : tplErr ? (
+                <Label className="text-[hsl(var(--muted-foreground))]">Apply Newsletter Template</Label>
+                {tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (
                   <Select disabled>
@@ -1107,31 +676,4 @@ export function UserEditModal({
   )
 }
 
-function LastSessionBadge({ userId }: { userId: string }) {
-  const [label, setLabel] = React.useState<string>("—")
-  React.useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/users/sessions?user_ids=${encodeURIComponent(userId)}`, { cache: "no-store" })
-        const payload = await res.json().catch(() => null)
-        const entry = payload?.sessions?.[userId]
-        const iso = entry?.lastSession
-        const count: number | undefined = entry?.count
-        if (!alive) return
-        if (!iso) { setLabel(count ? `Sessions: ${count}` : "never"); return }
-        const d = new Date(iso)
-        const diff = Date.now() - d.getTime()
-        const days = Math.floor(diff / (24 * 60 * 60 * 1000))
-        const base = days <= 0 ? "Last session: today" : `Last session: ${days}d ago`
-        setLabel(count ? `${base} • Sessions: ${count}` : base)
-      } catch {
-        if (alive) setLabel("—")
-      }
-    })()
-    return () => { alive = false }
-  }, [userId])
-  return (
-    <Badge variant="outline" className="rounded-none border-line text-xs text-ink">{label}</Badge>
-  )
-}
+// moved to components/user-edit-modal/LastSessionBadge

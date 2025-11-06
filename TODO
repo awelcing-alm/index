@@ -1,0 +1,1 @@
+Our authentication to the external public zephr endpoint is broken on local development. It works in prod, but we need those requests to accept proxy on local as well, can you make that update for me? 

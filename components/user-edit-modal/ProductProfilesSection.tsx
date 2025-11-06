@@ -140,6 +140,36 @@ export function ProductProfilesSection({ userId }: { userId?: string }) {
   const [productTpls, setProductTpls] = useState<Record<string, string[]>>({})
   const [grants, setGrants] = useState<{ radar?: boolean; compass?: boolean; scholar?: boolean; mylaw?: boolean } | null>(null)
   const [selectedProductTemplate, setSelectedProductTemplate] = useState<Record<string, string>>({})
+  const [profileDataStates, setProfileDataStates] = useState<Record<string, 'unavailable' | 'empty' | 'populated'>>({})
+
+  // Helper: detect if a profile has meaningful data
+  const hasProfileData = (key: string, data: any): boolean => {
+    if (!data || typeof data !== 'object') return false
+    const plugin = PROFILE_PLUGINS[key]
+    if (plugin?.sanitize) {
+      const norm = plugin.sanitize(data)
+      // Check for meaningful fields beyond just structure
+      const jsonStr = JSON.stringify(norm || {})
+      if (jsonStr === '{}' || jsonStr === '{"data":{}}') return false
+      // For mylaw: check preferences
+      if (key === 'mylaw') {
+        const prefs = norm?.preferences || {}
+        const hasTopics = Array.isArray(prefs.topics) && prefs.topics.length > 0
+        const hasRegions = Array.isArray(prefs.regions) && prefs.regions.length > 0
+        return hasTopics || hasRegions
+      }
+      // For radar: check followedEntities
+      if (key === 'radar') {
+        const userData = norm?.data?.userData || norm?.userData || {}
+        const followed = userData?.followedEntities || []
+        return Array.isArray(followed) && followed.length > 0
+      }
+      // Generic: check if values exist
+      const values = norm?.values || norm
+      return Object.keys(values).length > 0
+    }
+    return Object.keys(data).length > 0
+  }
 
   const visibleKeys = useMemo(() => {
     const union = { ...(grants || {}), ...(appAvail || {}) } as Record<string, any>
@@ -199,6 +229,19 @@ export function ProductProfilesSection({ userId }: { userId?: string }) {
         const a = payload?.availability || {}
         if (!alive) return
         setAppAvail({ radar: !!a.radar?.exists, compass: !!a.compass?.exists, scholar: !!a.scholar?.exists, mylaw: !!a.mylaw?.exists })
+        
+        // Determine data states for each product
+        const states: Record<string, 'unavailable' | 'empty' | 'populated'> = {}
+        for (const key of Object.keys(PROFILE_PLUGINS)) {
+          const exists = a[key]?.exists
+          if (!exists) {
+            states[key] = 'unavailable'
+          } else {
+            // Check if profile has data - we'll update this when loading
+            states[key] = 'empty'
+          }
+        }
+        setProfileDataStates(states)
       } catch (e: any) {
         if (!alive) return
         setAppErr(e?.message || "Failed to check app profiles")
@@ -220,6 +263,10 @@ export function ProductProfilesSection({ userId }: { userId?: string }) {
       const data = payload?.data ?? null
       const text = data ? JSON.stringify(data, null, 2) : "{}"
       setAppDraft(text)
+      
+      // Update data state based on actual profile content
+      const populated = hasProfileData(key, data)
+      setProfileDataStates((prev) => ({ ...prev, [key]: populated ? 'populated' : 'empty' }))
     } catch (e: any) {
       setAppDraft("{}")
       setAppErr(e?.message || "Failed to load profile")
@@ -301,10 +348,28 @@ export function ProductProfilesSection({ userId }: { userId?: string }) {
             const P = PROFILE_PLUGINS[k]
             const Icon = P?.icon || BookOpen
             const label = P?.label || (k[0]?.toUpperCase() + k.slice(1))
+            const state = profileDataStates[k] || 'unavailable'
             const available = (appAvail as any)?.[k]
+            
+            // Badge styling based on state
+            let stateBadge = null
+            let tabExtraClass = ""
+            if (state === 'unavailable') {
+              stateBadge = <Badge variant="outline" className="ml-2 rounded-none border-line bg-gray-100 text-gray-500 px-1.5 py-0 text-[10px]">Unavailable</Badge>
+              tabExtraClass = "opacity-50"
+            } else if (state === 'empty') {
+              stateBadge = <Badge variant="outline" className="ml-2 rounded-none border-blue-400 bg-blue-50 text-blue-600 px-1.5 py-0 text-[10px]">Available</Badge>
+            } else if (state === 'populated') {
+              stateBadge = <Badge variant="outline" className="ml-2 rounded-none border-green-500 bg-green-50 text-green-700 px-1.5 py-0 text-[10px]">✓ Active</Badge>
+            }
+            
             return (
-              <TabsTrigger key={k} value={k} className="rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm">
-                <div className="flex items-center gap-2"><Icon className="h-4 w-4" /> {label} {available ? <span className="ml-2 hidden text-xs text-ink sm:inline">• available</span> : null}</div>
+              <TabsTrigger key={k} value={k} className={`rounded-none px-4 py-3 text-sm font-medium text-[hsl(var(--muted-foreground))] data-[state=active]:bg-ink data-[state=active]:text-paper data-[state=active]:shadow-sm ${tabExtraClass}`}>
+                <div className="flex items-center gap-2">
+                  <Icon className="h-4 w-4" /> 
+                  {label} 
+                  {stateBadge}
+                </div>
               </TabsTrigger>
             )
           })}

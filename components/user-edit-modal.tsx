@@ -192,6 +192,7 @@ export function UserEditModal({
   const [pendingTpl, setPendingTpl] = useState<string | null>(null)
   const [tplStack, setTplStack] = useState<string[]>([])
   const [effectiveFromTemplates, setEffectiveFromTemplates] = useState<{ values: Record<string, boolean>, sources: Record<string, string[]> } | null>(null)
+  const [detectedTemplates, setDetectedTemplates] = useState<string[]>([])
 
   // groups
   const lookups = useMemo(() => buildLookups(groups), [groups])
@@ -236,6 +237,39 @@ export function UserEditModal({
       }
     })()
   }, [isOpen])
+
+  // Detect which templates are currently applied to this user
+  useEffect(() => {
+    if (!isOpen || !details || !tplNames.length) return
+    let alive = true
+    ;(async () => {
+      try {
+        const userAttrs = details.attributes || {}
+        const matches: string[] = []
+        
+        // Check each template to see if its attributes match the user
+        for (const name of tplNames) {
+          const tpl = await fetchTemplate(name)
+          if (!tpl || !alive) continue
+          
+          // Check if all template attributes are present and match
+          const tplAttrs = tpl.attributes || {}
+          const keys = Object.keys(tplAttrs).filter(k => tplAttrs[k] === true)
+          if (keys.length === 0) continue
+          
+          const allMatch = keys.every(k => userAttrs[k] === true || userAttrs[k] === 'true')
+          if (allMatch && keys.length > 0) {
+            matches.push(name)
+          }
+        }
+        
+        if (alive) setDetectedTemplates(matches)
+      } catch (e) {
+        console.error('Failed to detect templates:', e)
+      }
+    })()
+    return () => { alive = false }
+  }, [isOpen, details, tplNames])
 
   // Preview effective newsletters from template stack
   useEffect(() => {
@@ -474,6 +508,16 @@ export function UserEditModal({
               {/* Template (Newsletter) */}
               <div className="space-y-2">
                 <Label className="text-[hsl(var(--muted-foreground))]">Apply Newsletter Template</Label>
+                {detectedTemplates.length > 0 && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">Currently applied:</span>
+                    {detectedTemplates.map((name) => (
+                      <Badge key={name} variant="outline" className="rounded-none border-green-500 bg-green-50 text-green-700 px-2 py-0.5 text-xs">
+                        ✓ {name}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
                 {tplErr ? (
                   <p className="text-xs text-[hsl(var(--destructive))]">Failed to load templates</p>
                 ) : tplNames.length === 0 ? (

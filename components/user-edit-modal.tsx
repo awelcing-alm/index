@@ -29,6 +29,7 @@ import { ApplyTemplatesModal } from "@/components/templates/apply-templates-moda
 import { toast } from "@/hooks/use-toast"
 import { ProductProfilesSection } from "@/components/user-edit-modal/ProductProfilesSection"
 import { LastSessionBadge } from "@/components/user-edit-modal/LastSessionBadge"
+import { GroupInheritancePreview } from "@/components/user-edit-modal/GroupInheritancePreview"
 
 /* -------------------- types --------------------- */
 type GroupWithCount = Group & { user_count?: number }
@@ -459,7 +460,6 @@ export function UserEditModal({
 
   // Get selected group details for showing what will be inherited
   const selectedGroup = selectedGroupId ? lookups.byId[selectedGroupId] : null
-  const groupDemographics = selectedGroup?.demographics || {}
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -509,23 +509,7 @@ export function UserEditModal({
 
               {/* Show what will be inherited from group */}
               {selectedGroup && (
-                <Alert className="rounded-none border-blue-200 bg-blue-50">
-                  <Info className="h-4 w-4 text-blue-600" />
-                  <AlertDescription className="text-sm text-blue-900">
-                    <div className="font-medium mb-1">This group will apply:</div>
-                    <ul className="list-disc list-inside space-y-1 text-xs">
-                      {selectedGroup.default_template && (
-                        <li>Default newsletter template: <strong>{selectedGroup.default_template}</strong></li>
-                      )}
-                      {Object.keys(groupDemographics).length > 0 && (
-                        <li>Demographics: {Object.entries(groupDemographics).map(([k, v]) => `${k}=${v}`).join(', ')}</li>
-                      )}
-                      {Object.keys(groupDemographics).length === 0 && !selectedGroup.default_template && (
-                        <li>No automatic settings</li>
-                      )}
-                    </ul>
-                  </AlertDescription>
-                </Alert>
+                <GroupInheritancePreview group={selectedGroup} />
               )}
             </CardContent>
           </Card>

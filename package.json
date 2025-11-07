@@ -7,7 +7,9 @@
     "build": "next build",
     "dev": "next dev --turbopack",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "clean:large": "bash scripts/cleanup-large-text.sh --threshold 100k",
+    "clean:large:purge-known": "bash scripts/cleanup-large-text.sh --delete-known"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
